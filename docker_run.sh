@@ -1,7 +1,7 @@
 #!/bin/bash
 
-SCRIPT_PATH=$1
-# docker run --gpus=all -e CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES -v ./../mounted:/proj/mounted proj $SCRIPT_PATH
+COMMAND=${1:-bash}
 
-# start one or more containers on the SLURM-allocated GPU
-docker run -v ./../mounted:/proj/mounted --rm --gpus device=$CUDA_VISIBLE_DEVICES -it proj $SCRIPT_PATH
+# start rag-func-call container
+docker run --name proj -v ./main:/proj/main -v ./../mounted:/proj/mounted --gpus device=$CUDA_VISIBLE_DEVICES -it rag-func-call $COMMAND
+# docker run --gpus=all -e CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES -v ./../mounted:/proj/mounted proj $COMMAND

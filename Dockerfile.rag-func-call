@@ -33,6 +33,7 @@ RUN pip3 install --upgrade transformers
 RUN pip3 install --upgrade datasets
 RUN pip3 install --upgrade wandb==0.15.7
 RUN pip3 install --upgrade tqdm==4.63.1
+RUN pip3 install --upgrade huggingface_hub==0.18.0
 
 # required for flash attention
 RUN pip3 install -q accelerate

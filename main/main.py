@@ -146,7 +146,7 @@ def main():
             Q_log = torch.log(Q)
             divergence = kl_div(Q_log, Pr).sum(-1)
             loss = divergence.mean()
-            # print("BACKWARD STARTING...")
+            print("BACKWARD STARTING...")
             loss.backward()
             optimizer.step()
             lr_scheduler.step()
