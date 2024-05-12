@@ -5,6 +5,7 @@ from transformers import (
     AutoModelForCausalLM, 
     DataCollatorWithPadding, 
     DataCollatorForLanguageModeling, 
+    BitsAndBytesConfig,
     get_scheduler, 
     HfArgumentParser
 )
@@ -18,25 +19,59 @@ import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss, KLDivLoss
 from tqdm.auto import tqdm
 from huggingface_hub import login
+from src.data_classes import PyTorchTrainingParams
+import logging
 
 def main():
+    parser = HfArgumentParser(PyTorchTrainingParams)
+    (args,) = parser.parse_args_into_dataclasses()
+
     hf_key = os.getenv('HF_KEY')
     login(token=hf_key)
+    # set up logging
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
-    retr_tokenizer = AutoTokenizer.from_pretrained('BAAI/bge-base-zh-v1.5')
-    retr_model = AutoModel.from_pretrained('BAAI/bge-base-zh-v1.5').to("cuda")
-    infer_tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3-8B-Instruct")
+    def log_mem_usage():
+        current_device = torch.cuda.current_device()
+        memory_allocated = torch.cuda.memory_allocated(current_device)
+        memory_reserved = torch.cuda.memory_reserved(current_device)
+        logger.info(f"Memory Allocated: {memory_allocated / 1024**2} MB")
+        logger.info(f"Memory Reserved: {memory_reserved / 1024**2} MB")
+
+    retr_model_name = args.retr_model_name_or_path
+    infer_model_name = args.infer_model_name_or_path
+    retr_tokenizer = AutoTokenizer.from_pretrained(retr_model_name)
+    retr_model = AutoModel.from_pretrained(retr_model_name).to("cuda")
+    infer_tokenizer = AutoTokenizer.from_pretrained(infer_model_name)
+    if infer_tokenizer.pad_token is None:
+        print("No padding token - using EOS instead")
+        infer_tokenizer.pad_token = infer_tokenizer.eos_token
+    quantization_config = BitsAndBytesConfig(
+        # load_in_8bit=True,
+        load_in_4bit=True,
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16
+    )
     infer_model = AutoModelForCausalLM.from_pretrained(
-        "meta-llama/Meta-Llama-3-8B-Instruct",
+        infer_model_name,
         torch_dtype=torch.bfloat16,
-    ).to("cuda")
+        quantization_config=quantization_config
+    )#.to("cuda")
+
+    logger.info(f"Model dtype: {next(infer_model.parameters()).dtype}")
+    log_mem_usage()
 
     retr_model.train()
     infer_model.eval()
 
     def compute_embeddings(model, documents):
-        # Tokenize sentences
-        # encoded_input = tokenizer(documents, padding=True, truncation=True, return_tensors='pt')
         # Compute token embeddings
         documents = {k: v.to("cuda") for k, v in documents.items()}
         model_output = model(**documents)
@@ -61,16 +96,18 @@ def main():
         f'<|start_header_id|>assistant<|end_header_id|>\n\n{{}}{infer_tokenizer.eos_token}'
     )
 
-    dataset = load_from_disk('/proj/mounted/overlapping-functions-dataset')
+    dataset = load_from_disk(args.dataset_path)
+    query_column = args.query_column
+    response_column = args.response_column
     func_text = None
-    with open('/proj/mounted/documentation.txt', "r") as file1:
-        func_text = file1.read()
+    with open(args.docs_path, "r") as f:
+        func_text = f.read()
 
     documents = func_text.split("\n\n\n")
     tokenized_documents = retr_tokenizer(documents, padding=True, truncation=True, return_tensors='pt')
 
     def tokenize_function(samples):
-        return retr_tokenizer(samples["query"], padding=True, truncation=True, return_tensors='pt')
+        return retr_tokenizer(samples[query_column], padding=True, truncation=True, return_tensors='pt')
 
     input_training_dataset = dataset["train"].map(
         tokenize_function,
@@ -78,20 +115,20 @@ def main():
         remove_columns=dataset["train"].column_names
     )
 
-    batch_size=8
-    num_epochs=3
-    k = 3
-    gamma = 1
-    beta = 1
+    batch_size = args.batch_size
+    num_epochs = args.num_train_epochs
+    k = args.num_retrieved_docs_per_query
+    gamma = args.gamma_value
+    beta = args.beta_value
     data_collator = DataCollatorWithPadding(tokenizer=retr_tokenizer)
     data_loader = DataLoader(
         input_training_dataset, shuffle=False, batch_size=batch_size, collate_fn=data_collator
     )
 
-    optimizer = AdamW(retr_model.parameters(), lr=5e-5)
+    optimizer = AdamW(retr_model.parameters(), lr=args.learning_rate)
     num_training_steps = num_epochs * len(data_loader)
     lr_scheduler = get_scheduler(
-        "linear",
+        args.lr_scheduler,
         optimizer=optimizer,
         num_warmup_steps=0,
         num_training_steps=num_training_steps,
@@ -119,71 +156,77 @@ def main():
     9. compute the KL divergence between the distributions Pr(d|x) and Q(d|x,y) and average over all input queries
     """
 
-    # for epoch in range(num_epochs):
-    #     for index, batch in tqdm(enumerate(data_loader)):
-    #         # 1.
-    #         batch_data = dataset["train"][index*batch_size:(index+1)*batch_size]
-    #         # 2.
-    #         embedded_documents = compute_embeddings(retr_model, tokenized_documents)
-    #         embedded_queries = compute_embeddings(retr_model, batch)
-    #         embedded_documents_exp = embedded_documents.unsqueeze(0)  # Size becomes [1, n_docs, embeddings_size]
-    #         embedded_queries_exp = embedded_queries.unsqueeze(1)  # Size becomes [batch_size, 1, embeddings_size]
-    #         cos_sim = F.cosine_similarity(embedded_documents_exp, embedded_queries_exp, dim=-1)  # Size becomes [batch_size, n_docs]
-    #         top_k_docs = torch.topk(cos_sim, k, dim=-1)  # Size becomes [batch_size, k]
-    #         documents_per_query = top_k_docs.indices
-    #         similarities_per_query = top_k_docs.values
-    #         Pr = F.softmax(similarities_per_query / gamma, dim=1)
-    #         # 3.
-    #         prompts = [
-    #             prompt_template.format(
-    #                 documents[doc_index], 
-    #                 batch_data["query"][data_index], 
-    #                 batch_data["response"][data_index]
-    #             )
-    #             for i_th_doc in range(documents_per_query.size(1))
-    #             for data_index, doc_index in enumerate(documents_per_query[:, i_th_doc])
-    #         ]
-    #         # 4.
-    #         inner_dataset = Dataset.from_pandas(pd.DataFrame(prompts, columns=["text"]))
-    #         inner_dataset = inner_dataset.map(
-    #             inner_tokenize_function,
-    #             batched=True,
-    #             remove_columns=inner_dataset.column_names
-    #         )
-    #         inner_data_loader = data_loader = DataLoader(
-    #             inner_dataset, shuffle=False, batch_size=batch_size, collate_fn=inner_data_collator
-    #         )
-    #         # 5., 6. and 7.
-    #         perplexities = []
-    #         for inner_batch in inner_data_loader:
-    #             # TODO: move inner_batch to cuda
-    #             labels = inner_batch.pop("labels")
-    #             with torch.no_grad():
-    #                 outputs = infer_model(**inner_batch)
-    #             logits = outputs["logits"]
-    #             # logits = torch.randn(batch_size, inner_batch["input_ids"].size(1), 256000)
-    #             # labels = torch.randint(0, 256000, (batch_size, inner_batch["input_ids"].size(1)))
-    #             shift_labels = labels[..., 1:].contiguous()
-    #             shift_logits = logits[..., :-1, :].contiguous()
-    #             elem_wise_loss = cross_entropy(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-    #             loss_per_sample = elem_wise_loss.view(shift_logits.size(0), shift_logits.size(1)).mean(axis=1)
-    #             perplexity_per_sample = torch.exp(loss_per_sample)
-    #             perplexities.append(perplexity_per_sample)
-    #         perplexities = torch.stack(perplexities).T
-    #         # 8.
-    #         Q = F.softmax(perplexities / beta, dim=1)
-    #         # Q = F.softmax(torch.randint(0, 3, (batch_size,k)).float(), dim=1)
-    #         # 9.
-    #         Q_log = torch.log(Q)
-    #         divergence = kl_div(Q_log, Pr).sum(-1)
-    #         loss = divergence.mean()
-    #         print("BACKWARD STARTING...")
-    #         loss.backward()
-    #         optimizer.step()
-    #         lr_scheduler.step()
-    #         optimizer.zero_grad()
+    for epoch in range(num_epochs):
+        for index, batch in enumerate(data_loader):
+            logger.info("NEW BATCH STARTING...")
+            # 1.
+            batch_data = dataset["train"][index*batch_size:(index+1)*batch_size]
+            # 2.
+            embedded_documents = compute_embeddings(retr_model, tokenized_documents)
+            if "labels" in batch:
+                logger.warning(f"LABELS IN DOCUMENTS IN BATCH {index} EPOCH {epoch}")
+            embedded_queries = compute_embeddings(retr_model, batch)
+            embedded_documents_exp = embedded_documents.unsqueeze(0)  # Size becomes [1, n_docs, embeddings_size]
+            embedded_queries_exp = embedded_queries.unsqueeze(1)  # Size becomes [batch_size, 1, embeddings_size]
+            cos_sim = F.cosine_similarity(embedded_documents_exp, embedded_queries_exp, dim=-1)  # Size becomes [batch_size, n_docs]
+            top_k_docs = torch.topk(cos_sim, k, dim=-1)  # Size becomes [batch_size, k]
+            documents_per_query = top_k_docs.indices
+            similarities_per_query = top_k_docs.values
+            Pr = F.softmax(similarities_per_query / gamma, dim=1)
+            log_mem_usage()
+            # 3.
+            prompts = [
+                prompt_template.format(
+                    documents[doc_index], 
+                    batch_data[query_column][data_index], 
+                    batch_data[response_column][data_index]
+                )
+                for i_th_doc in range(documents_per_query.size(1))
+                for data_index, doc_index in enumerate(documents_per_query[:, i_th_doc])
+            ]
+            # 4.
+            inner_dataset = Dataset.from_pandas(pd.DataFrame(prompts, columns=["text"]))
+            inner_dataset = inner_dataset.map(
+                inner_tokenize_function,
+                batched=True,
+                remove_columns=inner_dataset.column_names
+            )
+            inner_data_loader = data_loader = DataLoader(
+                inner_dataset, shuffle=False, batch_size=batch_size, collate_fn=inner_data_collator
+            )
+            # 5., 6. and 7.
+            perplexities = []
+            for inner_batch in inner_data_loader:
+                inner_batch = {k: v.to("cuda") for k, v in inner_batch.items()}
+                labels = inner_batch.pop("labels")
+                with torch.no_grad():
+                    outputs = infer_model(**inner_batch)
+                log_mem_usage()
+                logits = outputs["logits"]
+                # logits = torch.randn(batch_size, inner_batch["input_ids"].size(1), 256000)
+                # labels = torch.randint(0, 256000, (batch_size, inner_batch["input_ids"].size(1)))
+                shift_labels = labels[..., 1:].contiguous()
+                shift_logits = logits[..., :-1, :].contiguous()
+                elem_wise_loss = cross_entropy(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+                loss_per_sample = elem_wise_loss.view(shift_logits.size(0), shift_logits.size(1)).mean(axis=1)
+                perplexity_per_sample = torch.exp(loss_per_sample)
+                perplexities.append(perplexity_per_sample)
+            perplexities = torch.stack(perplexities).T
+            # 8.
+            Q = F.softmax(perplexities / beta, dim=1)
+            # Q = F.softmax(torch.randint(0, 3, (batch_size,k)).float(), dim=1)
+            # 9.
+            Q_log = torch.log(Q)
+            divergence = kl_div(Q_log, Pr).sum(-1)
+            loss = divergence.mean()
+            logger.info("BACKWARD STARTING...")
+            loss.backward()
+            optimizer.step()
+            lr_scheduler.step()
+            optimizer.zero_grad()
 
-    torch.save(retr_model.state_dict(), '/proj/mounted/retr_model.pth')
+    logger.info("TRAINING FINISHED.")
+    # torch.save(retr_model.state_dict(), args.trained_model_save_path)
 
 if __name__ == "__main__":
     main()

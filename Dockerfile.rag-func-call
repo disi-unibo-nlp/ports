@@ -28,16 +28,16 @@ RUN pip install gdown
 RUN pip3 install -f https://download.pytorch.org/whl/cu118/torch_stable.html torch==2.1.0 torchvision==0.16+cu118
 
 # Install other Python packages
-RUN pip3 install --upgrade pandas==2.2.2
-RUN pip3 install --upgrade transformers==4.40.1
-RUN pip3 install --upgrade datasets==4.66.2
-RUN pip3 install --upgrade wandb==0.16.6
-RUN pip3 install --upgrade tqdm==4.66.2
-RUN pip3 install --upgrade huggingface_hub==0.23.0
+RUN pip3 install --upgrade pandas
+RUN pip3 install --upgrade transformers
+RUN pip3 install --upgrade datasets
+RUN pip3 install --upgrade wandb
+RUN pip3 install --upgrade tqdm
+RUN pip3 install --upgrade huggingface_hub
 
 # required for flash attention
 RUN pip3 install -q accelerate
-# RUN pip3 install bitsandbytes
+RUN pip3 install bitsandbytes
 # RUN pip3 install evaluate
 
 # Back to default frontend

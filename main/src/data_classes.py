@@ -35,7 +35,7 @@ class PyTorchTrainingParams:
         default=8, metadata={"help": "Batch size per GPU/TPU core/CPU for training."}
     )
 
-    num_train_epochs: float = field(default=3.0, metadata={"help": "Total number of training epochs to perform."})
+    num_train_epochs: int = field(default=3, metadata={"help": "Total number of training epochs to perform."})
 
     num_retrieved_docs_per_query: int = field(default=3, metadata={"help": "Number of retrieved documents per query (size of D' in RePlug paper)."})
 
