@@ -55,5 +55,15 @@ class PyTorchTrainingParams:
         metadata={"help": "Path to save the trained model."}
     )
 
+    quantize: bool = field(
+        default=False,
+        metadata={"help": "Whether to load the model quantized."}
+    )
+
+    quantization_4bit: bool = field(
+        default=False,
+        metadata={"help": "Whether to use 4-bit quantization or 8-bit quantization."}
+    )
+
 
 

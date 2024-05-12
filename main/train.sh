@@ -28,4 +28,6 @@ python3 main.py --dataset_path $DATASET_PATH \
                 --beta_value $BETA_VALUE \
                 --learning_rate $LEARNING_RATE \
                 --lr_scheduler $LR_SCHEDULER \
-                --trained_model_save_path $TRAINED_MODEL_SAVE_PATH
+                --trained_model_save_path $TRAINED_MODEL_SAVE_PATH \
+                --quantize \
+                --quantization_4bit

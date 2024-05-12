@@ -50,20 +50,23 @@ def main():
     retr_model = AutoModel.from_pretrained(retr_model_name).to("cuda")
     infer_tokenizer = AutoTokenizer.from_pretrained(infer_model_name)
     if infer_tokenizer.pad_token is None:
-        print("No padding token - using EOS instead")
+        logger.info("No padding token - using EOS instead")
         infer_tokenizer.pad_token = infer_tokenizer.eos_token
-    quantization_config = BitsAndBytesConfig(
-        # load_in_8bit=True,
-        load_in_4bit=True,
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.bfloat16
-    )
-    infer_model = AutoModelForCausalLM.from_pretrained(
-        infer_model_name,
-        torch_dtype=torch.bfloat16,
-        quantization_config=quantization_config
-    )#.to("cuda")
+    if args.quantize:
+        quantization_config = BitsAndBytesConfig(
+            load_in_8bit=False if args.quantization_4bit else True,
+            load_in_4bit=True if args.quantization_4bit else False,
+            # bnb_4bit_use_double_quant=True,
+            # bnb_4bit_quant_type="nf4",
+            # bnb_4bit_compute_dtype=torch.bfloat16
+        )
+        infer_model = AutoModelForCausalLM.from_pretrained(
+            infer_model_name,
+            torch_dtype=torch.bfloat16,
+            quantization_config=quantization_config
+        )
+    else:
+        infer_model = AutoModelForCausalLM.from_pretrained(infer_model_name, torch_dtype=torch.bfloat16).to("cuda")
 
     logger.info(f"Model dtype: {next(infer_model.parameters()).dtype}")
     log_mem_usage()
@@ -158,13 +161,11 @@ def main():
 
     for epoch in range(num_epochs):
         for index, batch in enumerate(data_loader):
-            logger.info("NEW BATCH STARTING...")
+            logger.info(f"BATCH {index} AT EPOCH {epoch} STARTING...")
             # 1.
             batch_data = dataset["train"][index*batch_size:(index+1)*batch_size]
             # 2.
             embedded_documents = compute_embeddings(retr_model, tokenized_documents)
-            if "labels" in batch:
-                logger.warning(f"LABELS IN DOCUMENTS IN BATCH {index} EPOCH {epoch}")
             embedded_queries = compute_embeddings(retr_model, batch)
             embedded_documents_exp = embedded_documents.unsqueeze(0)  # Size becomes [1, n_docs, embeddings_size]
             embedded_queries_exp = embedded_queries.unsqueeze(1)  # Size becomes [batch_size, 1, embeddings_size]
@@ -191,7 +192,7 @@ def main():
                 batched=True,
                 remove_columns=inner_dataset.column_names
             )
-            inner_data_loader = data_loader = DataLoader(
+            inner_data_loader = DataLoader(
                 inner_dataset, shuffle=False, batch_size=batch_size, collate_fn=inner_data_collator
             )
             # 5., 6. and 7.
@@ -203,8 +204,6 @@ def main():
                     outputs = infer_model(**inner_batch)
                 log_mem_usage()
                 logits = outputs["logits"]
-                # logits = torch.randn(batch_size, inner_batch["input_ids"].size(1), 256000)
-                # labels = torch.randint(0, 256000, (batch_size, inner_batch["input_ids"].size(1)))
                 shift_labels = labels[..., 1:].contiguous()
                 shift_logits = logits[..., :-1, :].contiguous()
                 elem_wise_loss = cross_entropy(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
@@ -214,16 +213,18 @@ def main():
             perplexities = torch.stack(perplexities).T
             # 8.
             Q = F.softmax(perplexities / beta, dim=1)
-            # Q = F.softmax(torch.randint(0, 3, (batch_size,k)).float(), dim=1)
             # 9.
             Q_log = torch.log(Q)
             divergence = kl_div(Q_log, Pr).sum(-1)
             loss = divergence.mean()
-            logger.info("BACKWARD STARTING...")
+            logger.info(f"BACKWARD STARTING WITH LOSS {loss}...")
             loss.backward()
             optimizer.step()
             lr_scheduler.step()
             optimizer.zero_grad()
+            # prevent discrepancy between allocated and reserved memory
+            torch.cuda.empty_cache()
+        
 
     logger.info("TRAINING FINISHED.")
     # torch.save(retr_model.state_dict(), args.trained_model_save_path)
