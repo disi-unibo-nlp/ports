@@ -6,7 +6,7 @@ RETR_MODEL_NAME_OR_PATH="BAAI/bge-base-zh-v1.5"
 INFER_MODEL_NAME_OR_PATH="meta-llama/Meta-Llama-3-8B-Instruct"
 QUERY_COLUMN="query"
 RESPONSE_COLUMN="response"
-BATCH_SIZE=8
+BATCH_SIZE=32
 NUM_TRAIN_EPOCHS=3
 NUM_RETRIEVED_DOCS_PER_QUERY=3
 GAMMA_VALUE=1.0
@@ -30,4 +30,5 @@ python3 main.py --dataset_path $DATASET_PATH \
                 --lr_scheduler $LR_SCHEDULER \
                 --trained_model_save_path $TRAINED_MODEL_SAVE_PATH \
                 --quantize \
-                --quantization_4bit
+                --quantization_4bit \
+                # --log_to_wandb

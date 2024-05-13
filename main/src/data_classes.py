@@ -65,5 +65,9 @@ class PyTorchTrainingParams:
         metadata={"help": "Whether to use 4-bit quantization or 8-bit quantization."}
     )
 
+    log_to_wandb: bool = field(
+        default=False,
+        metadata={"help": "Whether to log training progress to Weights & Biases."}
+    )
 
 

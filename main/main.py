@@ -21,13 +21,16 @@ from tqdm.auto import tqdm
 from huggingface_hub import login
 from src.data_classes import PyTorchTrainingParams
 import logging
+import wandb
 
 def main():
     parser = HfArgumentParser(PyTorchTrainingParams)
     (args,) = parser.parse_args_into_dataclasses()
+    log_wandb = args.log_to_wandb
 
     hf_key = os.getenv('HF_KEY')
     login(token=hf_key)
+
     # set up logging
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.DEBUG)
@@ -70,6 +73,28 @@ def main():
 
     logger.info(f"Model dtype: {next(infer_model.parameters()).dtype}")
     log_mem_usage()
+
+    if log_wandb:
+        wandb_key = os.getenv('WANDB_KEY')
+        wandb.login(key=wandb_key)
+        wandb.init(
+            project='fine-tuning-retriever',
+            name=f"training run",
+            config={
+                "retr_model_name_or_path": args.retr_model_name_or_path,
+                "infer_model_name_or_path": args.infer_model_name_or_path,
+                "quantize": args.quantize,
+                "quantization_4bit": args.quantization_4bit,
+                "batch_size": args.batch_size,
+                "num_train_epochs": args.num_train_epochs,
+                "num_retrieved_docs_per_query": args.num_retrieved_docs_per_query,
+                "gamma_value": args.gamma_value,
+                "beta_value": args.beta_value,
+                "learning_rate": args.learning_rate,
+                "lr_scheduler": args.lr_scheduler,
+            }
+        )
+        wandb.watch(retr_model, log_freq=10)
 
     retr_model.train()
     infer_model.eval()
@@ -222,11 +247,16 @@ def main():
             optimizer.step()
             lr_scheduler.step()
             optimizer.zero_grad()
+            
+            if log_wandb:
+                wandb.log({"Loss": loss.item()})
             # prevent discrepancy between allocated and reserved memory
             torch.cuda.empty_cache()
         
 
     logger.info("TRAINING FINISHED.")
+    if log_wandb:
+        wandb.finish()
     # torch.save(retr_model.state_dict(), args.trained_model_save_path)
 
 if __name__ == "__main__":
