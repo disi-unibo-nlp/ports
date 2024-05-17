@@ -35,6 +35,11 @@ RUN pip3 install --upgrade wandb
 RUN pip3 install --upgrade tqdm
 RUN pip3 install --upgrade huggingface_hub
 
+# frameworks
+RUN pip3 install llama-index
+RUN pip3 install langchain
+RUN curl -fsSL https://ollama.com/install.sh | sh
+
 # required for flash attention
 RUN pip3 install -q accelerate
 RUN pip3 install bitsandbytes

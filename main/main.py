@@ -79,7 +79,7 @@ def main():
         wandb.login(key=wandb_key)
         wandb.init(
             project='fine-tuning-retriever',
-            name=f"training run",
+            name=f"training run - {args.dataset_path.split('/')[-1]}",
             config={
                 "retr_model_name_or_path": args.retr_model_name_or_path,
                 "infer_model_name_or_path": args.infer_model_name_or_path,
@@ -92,6 +92,7 @@ def main():
                 "beta_value": args.beta_value,
                 "learning_rate": args.learning_rate,
                 "lr_scheduler": args.lr_scheduler,
+                "dataset_path": args.dataset_path,
             }
         )
         wandb.watch(retr_model, log_freq=10)
@@ -143,18 +144,27 @@ def main():
         remove_columns=dataset["train"].column_names
     )
 
+    input_eval_dataset = dataset["test"].map(
+        tokenize_function,
+        batched=True,
+        remove_columns=dataset["test"].column_names
+    )
+
     batch_size = args.batch_size
     num_epochs = args.num_train_epochs
     k = args.num_retrieved_docs_per_query
     gamma = args.gamma_value
     beta = args.beta_value
     data_collator = DataCollatorWithPadding(tokenizer=retr_tokenizer)
-    data_loader = DataLoader(
-        input_training_dataset, shuffle=False, batch_size=batch_size, collate_fn=data_collator
+    train_data_loader = DataLoader(
+        input_training_dataset, shuffle=True, batch_size=batch_size, collate_fn=data_collator
+    )
+    eval_data_loader = DataLoader(
+        input_eval_dataset, shuffle=True, batch_size=batch_size, collate_fn=data_collator
     )
 
     optimizer = AdamW(retr_model.parameters(), lr=args.learning_rate)
-    num_training_steps = num_epochs * len(data_loader)
+    num_training_steps = num_epochs * len(train_data_loader)
     lr_scheduler = get_scheduler(
         args.lr_scheduler,
         optimizer=optimizer,
@@ -169,6 +179,69 @@ def main():
 
     def inner_tokenize_function(samples):
         return infer_tokenizer(samples["text"], truncation=True, padding=True, return_tensors="pt")
+
+    # evaluation function
+    def evaluate(embedded_documents):
+        with torch.no_grad():
+            for index, batch in enumerate(eval_data_loader):
+                curr_bs = batch["input_ids"].size(0)
+                # 1.
+                batch_data = dataset["test"][index*batch_size:(index*batch_size)+curr_bs]
+                # 2.
+                embedded_queries = compute_embeddings(retr_model, batch)
+                embedded_documents_exp = embedded_documents.unsqueeze(0)  # Size becomes [1, n_docs, embeddings_size]
+                embedded_queries_exp = embedded_queries.unsqueeze(1)  # Size becomes [batch_size, 1, embeddings_size]
+                cos_sim = F.cosine_similarity(embedded_documents_exp, embedded_queries_exp, dim=-1)  # Size becomes [batch_size, n_docs]
+                top_k_docs = torch.topk(cos_sim, k, dim=-1)  # Size becomes [batch_size, k]
+                documents_per_query = top_k_docs.indices
+                similarities_per_query = top_k_docs.values
+                Pr = F.softmax(similarities_per_query / gamma, dim=1)
+                # 3.
+                prompts = [
+                    prompt_template.format(
+                        documents[doc_index], 
+                        batch_data[query_column][data_index], 
+                        batch_data[response_column][data_index]
+                    )
+                    for i_th_doc in range(documents_per_query.size(1))
+                    for data_index, doc_index in enumerate(documents_per_query[:, i_th_doc])
+                ]
+                # 4.
+                inner_dataset = Dataset.from_pandas(pd.DataFrame(prompts, columns=["text"]))
+                inner_dataset = inner_dataset.map(
+                    inner_tokenize_function,
+                    batched=True,
+                    remove_columns=inner_dataset.column_names
+                )
+                inner_data_loader = DataLoader(
+                    inner_dataset, shuffle=False, batch_size=curr_bs, collate_fn=inner_data_collator
+                )
+                # 5., 6. and 7.
+                perplexities = []
+                for inner_batch in inner_data_loader:
+                    inner_batch = {k: v.to("cuda") for k, v in inner_batch.items()}
+                    labels = inner_batch.pop("labels")
+                    with torch.no_grad():
+                        outputs = infer_model(**inner_batch)
+                    logits = outputs["logits"]
+                    shift_labels = labels[..., 1:].contiguous()
+                    shift_logits = logits[..., :-1, :].contiguous()
+                    elem_wise_loss = cross_entropy(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+                    loss_per_sample = elem_wise_loss.view(shift_logits.size(0), shift_logits.size(1)).mean(axis=1)
+                    perplexity_per_sample = torch.exp(loss_per_sample)
+                    perplexities.append(perplexity_per_sample)
+                    # torch.cuda.empty_cache()
+                perplexities = torch.stack(perplexities).T
+                # 8.
+                Q = F.softmax(perplexities / beta, dim=1)
+                # 9.
+                Q_log = torch.log(Q)
+                divergence = kl_div(Q_log, Pr).sum(-1)
+                loss = divergence.mean()
+                if log_wandb:
+                    wandb.log({"Evaluation Loss": loss.item()})
+                # torch.cuda.empty_cache()              
+                logger.info(f"EVALUATION LOSS: {loss}")  
 
     """
     (B batch size, L length in tokens of each encoded example in a batch, V vocabulary length)
@@ -185,10 +258,11 @@ def main():
     """
 
     for epoch in range(num_epochs):
-        for index, batch in enumerate(data_loader):
+        for index, batch in enumerate(train_data_loader):
             logger.info(f"BATCH {index} AT EPOCH {epoch} STARTING...")
+            curr_bs = batch["input_ids"].size(0)
             # 1.
-            batch_data = dataset["train"][index*batch_size:(index+1)*batch_size]
+            batch_data = dataset["train"][index*batch_size:(index*batch_size)+curr_bs]
             # 2.
             embedded_documents = compute_embeddings(retr_model, tokenized_documents)
             embedded_queries = compute_embeddings(retr_model, batch)
@@ -218,7 +292,7 @@ def main():
                 remove_columns=inner_dataset.column_names
             )
             inner_data_loader = DataLoader(
-                inner_dataset, shuffle=False, batch_size=batch_size, collate_fn=inner_data_collator
+                inner_dataset, shuffle=False, batch_size=curr_bs, collate_fn=inner_data_collator
             )
             # 5., 6. and 7.
             perplexities = []
@@ -227,7 +301,7 @@ def main():
                 labels = inner_batch.pop("labels")
                 with torch.no_grad():
                     outputs = infer_model(**inner_batch)
-                log_mem_usage()
+                # log_mem_usage()
                 logits = outputs["logits"]
                 shift_labels = labels[..., 1:].contiguous()
                 shift_logits = logits[..., :-1, :].contiguous()
@@ -235,6 +309,7 @@ def main():
                 loss_per_sample = elem_wise_loss.view(shift_logits.size(0), shift_logits.size(1)).mean(axis=1)
                 perplexity_per_sample = torch.exp(loss_per_sample)
                 perplexities.append(perplexity_per_sample)
+                # torch.cuda.empty_cache()
             perplexities = torch.stack(perplexities).T
             # 8.
             Q = F.softmax(perplexities / beta, dim=1)
@@ -249,9 +324,10 @@ def main():
             optimizer.zero_grad()
             
             if log_wandb:
-                wandb.log({"Loss": loss.item()})
+                wandb.log({"Training Loss": loss.item()})
             # prevent discrepancy between allocated and reserved memory
-            torch.cuda.empty_cache()
+            # torch.cuda.empty_cache()
+        evaluate(embedded_documents)
         
 
     logger.info("TRAINING FINISHED.")
