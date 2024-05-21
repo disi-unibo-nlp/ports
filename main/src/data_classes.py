@@ -12,7 +12,7 @@ class PyTorchTrainingParams:
     )
 
     retr_model_name_or_path: str = field(
-        default="BAAI/bge-base-zh-v1.5",
+        default="BAAI/bge-base-en-v1.5",
         metadata={"help": "Path to pretrained retrieval model or model identifier from huggingface.co/models"}
     )
 
