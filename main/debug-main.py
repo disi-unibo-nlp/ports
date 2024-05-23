@@ -22,10 +22,6 @@ from huggingface_hub import login
 from src.data_classes import PyTorchTrainingParams
 import logging
 import wandb
-import socket
-from datetime import datetime, timedelta
-from torch.autograd.profiler import record_function
-
 
 def main():
     parser = HfArgumentParser(PyTorchTrainingParams)
@@ -52,9 +48,8 @@ def main():
         current_device = torch.cuda.current_device()
         memory_allocated = torch.cuda.memory_allocated(current_device)
         memory_reserved = torch.cuda.memory_reserved(current_device)
-        # logger.info(f"Memory Allocated: {memory_allocated / 1024**2} MB")
-        # logger.info(f"Memory Reserved: {memory_reserved / 1024**2} MB")
         logger.info(f"{topic} A: {memory_allocated / 1024**2} MB, R: {memory_reserved / 1024**2} MB")
+
 
     retr_model_name = args.retr_model_name_or_path
     infer_model_name = args.infer_model_name_or_path
@@ -81,7 +76,6 @@ def main():
         infer_model = AutoModelForCausalLM.from_pretrained(infer_model_name, torch_dtype=torch.bfloat16).to("cuda")
 
     logger.info(f"Model dtype: {next(infer_model.parameters()).dtype}")
-    log_mem_usage("MODEL LOADED")
 
     if log_wandb:
         wandb_key = os.getenv('WANDB_KEY')
@@ -146,7 +140,6 @@ def main():
     documents = func_text.split("\n\n\n")
     tokenized_documents = retr_tokenizer(documents, padding=True, truncation=True, return_tensors='pt')
 
-
     def tokenize_function(samples):
         return retr_tokenizer(samples[query_column], padding=True, truncation=True, return_tensors='pt')
 
@@ -169,10 +162,11 @@ def main():
     beta = args.beta_value
     data_collator = DataCollatorWithPadding(tokenizer=retr_tokenizer)
     train_data_loader = DataLoader(
-        input_training_dataset, shuffle=True, batch_size=batch_size, collate_fn=data_collator
+        input_training_dataset, shuffle=False, batch_size=batch_size, collate_fn=data_collator
     )
+    print(len(train_data_loader.dataset))
     eval_data_loader = DataLoader(
-        input_eval_dataset, shuffle=True, batch_size=batch_size, collate_fn=data_collator
+        input_eval_dataset, shuffle=False, batch_size=batch_size, collate_fn=data_collator
     )
 
     optimizer = AdamW(retr_model.parameters(), lr=args.learning_rate)
@@ -190,43 +184,43 @@ def main():
     inner_data_collator = DataCollatorForLanguageModeling(tokenizer=infer_tokenizer, mlm=False)
 
     def inner_tokenize_function(samples):
-        return infer_tokenizer(samples["text"], truncation=True, padding=True, return_tensors="pt") 
-    
-    
+        return infer_tokenizer(samples["text"], truncation=True, padding=True, return_tensors="pt")
 
-    """
-    (B batch size, L length in tokens of each encoded example in a batch, V vocabulary length)
-    loop for each batch:
-    1. batch contains the tokenized queries by the encoder, use the batchs's indices in the loop to retrieve the queries
-    2. re-compute the embeddings, retrieve top-k for each input query, for each query compute distribution Pr(d|x)
-    3. for each query and each retrived document, make a prompt
-    4. make k batches, each one containing the queries of the original batch with different documents
-    5. run the model k times, once of each batch, obtain k outputs of size (B x Lk x V)
-    6. compute perplexities for each input example of the k batches, get k vectors of length B
-    7. stack the k vectors (on the colums) to get a matrix of shape (B x k), containing the perplexities for each input query on all of its retrieved documents
-    8. use the perplexities on each input query to compute the distributions Q(d|x,y)
-    9. compute the KL divergence between the distributions Pr(d|x) and Q(d|x,y) and average over all input queries
-    """
-    log_mem_usage("BEFORE TRAINING")
-    # tokenized_query = infer_tokenizer(prompt_template.format("ciao", "ciao", "ciao"), padding=True, truncation=True, return_tensors='pt').to("cuda")
-    # outputs = infer_model(**tokenized_query)
-    # with torch.no_grad():
-    # tokenized_doc = retr_tokenizer(doc, padding=True, truncation=True, return_tensors='pt')
-    # embedded_doc = compute_embeddings(retr_model, tokenized_doc)
+    def verify_relevancy(response, doc):
+        return response.split('(')[0] in doc
 
-    # Start recording memory snapshot history, initialized with a buffer
-    # capacity of 100,000 memory events, via the `max_entries` field.
-    torch.cuda.memory._record_memory_history()
+    def get_relevant_docs(batch_data, documents):
+        rel_docs = []
+        bs = len(batch_data["response"])
+        for response in batch_data["response"]:
+            for i, doc in enumerate(documents):
+                if verify_relevancy(response, doc):
+                    rel_docs.append(i)
+                    break
+        return torch.tensor(rel_docs).unsqueeze(-1)
 
-    for epoch in range(num_epochs):
-        for index, batch in enumerate(train_data_loader):
-            # logger.info(f"BATCH {index} AT EPOCH {epoch} STARTING...")
-            log_mem_usage("BATCH STARTING...")
+    def accumulate_ranks_at_n(ranks, documents_per_query, documents, batch_data, k):
+        rel = get_relevant_docs(batch_data, documents).to("cuda")
+        logger.info("DOC PER QUERY")
+        print(documents_per_query)
+        logger.info("REL")
+        print(rel)
+        logger.info("DATA")
+        print(batch_data)
+        for n in range(k):
+            rank_at_k = torch.any(documents_per_query[:, :n+1] == rel, dim=-1).sum()
+            ranks[n] += rank_at_k
+        return ranks
+
+    # evaluation function
+    def evaluate(embedded_documents):
+        # with torch.no_grad():
+        ranks = [0 for _ in range(k)]
+        for index, batch in enumerate(eval_data_loader):
             curr_bs = batch["input_ids"].size(0)
             # 1.
-            batch_data = dataset["train"][index*batch_size:(index*batch_size)+curr_bs]
+            batch_data = dataset["test"][index*batch_size:(index*batch_size)+curr_bs]
             # 2.
-            embedded_documents = compute_embeddings(retr_model, tokenized_documents)
             embedded_queries = compute_embeddings(retr_model, batch)
             embedded_documents_exp = embedded_documents.unsqueeze(0)  # Size becomes [1, n_docs, embeddings_size]
             embedded_queries_exp = embedded_queries.unsqueeze(1)  # Size becomes [batch_size, 1, embeddings_size]
@@ -234,9 +228,9 @@ def main():
             top_k_docs = torch.topk(cos_sim, k, dim=-1)  # Size becomes [batch_size, k]
             documents_per_query = top_k_docs.indices
             similarities_per_query = top_k_docs.values
+            accumulate_ranks_at_n(ranks, documents_per_query, documents, batch_data, k)
             Pr = F.softmax(similarities_per_query / gamma, dim=1)
             del embedded_queries, embedded_documents_exp, embedded_queries_exp, cos_sim, top_k_docs, similarities_per_query
-            log_mem_usage("RETRIEVAL DONE")
             # 3.
             prompts = [
                 prompt_template.format(
@@ -260,17 +254,11 @@ def main():
             # 5., 6. and 7.
             perplexities = []
             for inner_batch in inner_data_loader:
-                log_mem_usage("     I-B STARTING...")
                 inner_batch = {k: v.to("cuda") for k, v in inner_batch.items()}
                 labels = inner_batch.pop("labels")
-                # labels = labels.to("cpu")
-                log_mem_usage("     I-B FORW STARTING...")
                 with torch.no_grad():
                     outputs = infer_model(**inner_batch)
-                log_mem_usage("     I-B FORW DONE...")
-                # break
                 logits = outputs["logits"]
-                # logits = logits.to("cpu")
                 shift_labels = labels[..., 1:].contiguous()
                 shift_logits = logits[..., :-1, :].contiguous()
                 elem_wise_loss = cross_entropy(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
@@ -279,9 +267,6 @@ def main():
                 perplexities.append(perplexity_per_sample)
                 del outputs, logits, shift_labels, shift_logits, elem_wise_loss, loss_per_sample, perplexity_per_sample
                 torch.cuda.empty_cache()
-                log_mem_usage("     I-B DONE...")
-            # break
-            log_mem_usage("INNER BATCH DONE")
             perplexities = torch.stack(perplexities).T
             # 8.
             Q = F.softmax(perplexities / beta, dim=1)
@@ -289,27 +274,114 @@ def main():
             Q_log = torch.log(Q)
             divergence = kl_div(Q_log, Pr).sum(-1)
             loss = divergence.mean()
-            # logger.info(f"BACKWARD STARTING WITH LOSS {loss}...")
-            loss.backward()
-            optimizer.step()
-            lr_scheduler.step()
-            optimizer.zero_grad()
-            log_mem_usage("END OF BATCH")
             del perplexities, Q, Q_log, divergence, Pr, inner_dataset, inner_data_loader, inner_batch
             torch.cuda.empty_cache()
             if log_wandb:
-                wandb.log({"Training Loss": loss.item()})
-        # break
-    try:
-        torch.cuda.memory._dump_snapshot(f"/proj/mounted/mem-snapshot.pickle")
-    except Exception as e:
-        logger.error(f"Failed to capture memory snapshot {e}")
+                wandb.log({"Evaluation Loss": loss.item()})
+            logger.info(f"EVALUATION LOSS: {loss}")
+        ranks = [r / len(eval_data_loader.dataset) * 100 for r in ranks]
+        for n in range(k):
+            logger.info(f"RANK@{n+1}: {ranks[n]}")
+            if log_wandb:
+                wandb.log({f"Rank@{n+1}": ranks[n] for n in range(k)})            
 
-    #Stop recording memory snapshot history.
-    torch.cuda.memory._record_memory_history(enabled=None)
+    """
+    (B batch size, L length in tokens of each encoded example in a batch, V vocabulary length)
+    loop for each batch:
+    1. batch contains the tokenized queries by the encoder, use the batchs's indices in the loop to retrieve the queries
+    2. re-compute the embeddings, retrieve top-k for each input query, for each query compute distribution Pr(d|x)
+    3. for each query and each retrived document, make a prompt
+    4. make k batches, each one containing the queries of the original batch with different documents
+    5. run the model k times, once of each batch, obtain k outputs of size (B x Lk x V)
+    6. compute perplexities for each input example of the k batches, get k vectors of length B
+    7. stack the k vectors (on the colums) to get a matrix of shape (B x k), containing the perplexities for each input query on all of its retrieved documents
+    8. use the perplexities on each input query to compute the distributions Q(d|x,y)
+    9. compute the KL divergence between the distributions Pr(d|x) and Q(d|x,y) and average over all input queries
+    """
+    embedded_documents = compute_embeddings(retr_model, tokenized_documents)
+    evaluate(embedded_documents)
+    # print(dataset["train"][:3])
+    # dataset["train"] = dataset["train"].shuffle()
+    # print(dataset["train"][:3])
+    # for epoch in range(num_epochs):
+    #     for index, batch in enumerate(train_data_loader):
+    #         log_mem_usage("BATCH STARTING")
+    #         curr_bs = batch["input_ids"].size(0)
+    #         # 1.
+    #         batch_data = dataset["train"][index*batch_size:(index*batch_size)+curr_bs]
+    #         # 2.
+    #         embedded_documents = compute_embeddings(retr_model, tokenized_documents)
+    #         embedded_queries = compute_embeddings(retr_model, batch)
+    #         embedded_documents_exp = embedded_documents.unsqueeze(0)  # Size becomes [1, n_docs, embeddings_size]
+    #         embedded_queries_exp = embedded_queries.unsqueeze(1)  # Size becomes [batch_size, 1, embeddings_size]
+    #         cos_sim = F.cosine_similarity(embedded_documents_exp, embedded_queries_exp, dim=-1)  # Size becomes [batch_size, n_docs]
+    #         top_k_docs = torch.topk(cos_sim, k, dim=-1)  # Size becomes [batch_size, k]
+    #         documents_per_query = top_k_docs.indices
+    #         similarities_per_query = top_k_docs.values
+    #         Pr = F.softmax(similarities_per_query / gamma, dim=1)
+    #         del embedded_queries, embedded_documents_exp, embedded_queries_exp, cos_sim, top_k_docs, similarities_per_query
+    #         # 3.
+    #         prompts = [
+    #             prompt_template.format(
+    #                 documents[doc_index], 
+    #                 batch_data[query_column][data_index], 
+    #                 batch_data[response_column][data_index]
+    #             )
+    #             for i_th_doc in range(documents_per_query.size(1))
+    #             for data_index, doc_index in enumerate(documents_per_query[:, i_th_doc])
+    #         ]
+    #         # 4.
+    #         inner_dataset = Dataset.from_pandas(pd.DataFrame(prompts, columns=["text"]))
+    #         inner_dataset = inner_dataset.map(
+    #             inner_tokenize_function,
+    #             batched=True,
+    #             remove_columns=inner_dataset.column_names
+    #         )
+    #         inner_data_loader = DataLoader(
+    #             inner_dataset, shuffle=False, batch_size=curr_bs, collate_fn=inner_data_collator
+    #         )
+    #         # 5., 6. and 7.
+    #         perplexities = []
+    #         for inner_batch in inner_data_loader:
+    #             inner_batch = {k: v.to("cuda") for k, v in inner_batch.items()}
+    #             labels = inner_batch.pop("labels")
+    #             with torch.no_grad():
+    #                 outputs = infer_model(**inner_batch)
+    #             logits = outputs["logits"]
+    #             shift_labels = labels[..., 1:].contiguous()
+    #             shift_logits = logits[..., :-1, :].contiguous()
+    #             elem_wise_loss = cross_entropy(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+    #             loss_per_sample = elem_wise_loss.view(shift_logits.size(0), shift_logits.size(1)).mean(axis=1)
+    #             perplexity_per_sample = torch.exp(loss_per_sample)
+    #             perplexities.append(perplexity_per_sample)
+    #             del outputs, logits, shift_labels, shift_logits, elem_wise_loss, loss_per_sample, perplexity_per_sample
+    #             torch.cuda.empty_cache()
+    #         perplexities = torch.stack(perplexities).T
+    #         # 8.
+    #         Q = F.softmax(perplexities / beta, dim=1)
+    #         # 9.
+    #         Q_log = torch.log(Q)
+    #         divergence = kl_div(Q_log, Pr).sum(-1)
+    #         loss = divergence.mean()
+    #         log_mem_usage(f"BACKWARD STARTING WITH LOSS {loss}")
+    #         loss.backward()
+    #         optimizer.step()
+    #         lr_scheduler.step()
+    #         optimizer.zero_grad()
+            
+    #         del perplexities, Q, Q_log, divergence, Pr, inner_dataset, inner_data_loader, inner_batch
+    #         torch.cuda.empty_cache()
+    #         if log_wandb:
+    #             wandb.log({"Training Loss": loss.item()})
+    #     evaluate(embedded_documents)
+    #     del embedded_documents
+    #     torch.cuda.empty_cache()
+        
+
     logger.info("TRAINING FINISHED.")
     if log_wandb:
         wandb.finish()
+    # torch.save(retr_model.state_dict(), args.trained_model_save_path)
 
 if __name__ == "__main__":
     main()

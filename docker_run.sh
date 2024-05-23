@@ -12,5 +12,5 @@ docker run --name proj \
            --gpus '"device='"$CUDA_VISIBLE_DEVICES"'"' \
            -e HF_KEY=$HF_KEY \
            -e WANDB_KEY=$WANDB_KEY \
-           rag-func-call $COMMAND
-        #    -it rag-func-call $COMMAND
+           -it rag-func-call $COMMAND
+        #    rag-func-call $COMMAND

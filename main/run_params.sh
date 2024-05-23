@@ -43,7 +43,7 @@ for GAMMA_VALUE in ${GAMMA_VALUES[@]}; do
                                 --trained_model_save_path $TRAINED_MODEL_SAVE_PATH \
                                 --quantize \
                                 --quantization_4bit \
-                                --log_to_wandb
+                                # --log_to_wandb
             done
         done
     done

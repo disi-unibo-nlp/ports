@@ -48,7 +48,7 @@ def main():
         current_device = torch.cuda.current_device()
         memory_allocated = torch.cuda.memory_allocated(current_device)
         memory_reserved = torch.cuda.memory_reserved(current_device)
-        logger.info(f"{topic} A: {memory_allocated / 1024**2} MB, R: {memory_reserved / 1024**2} MB")
+        # logger.info(f"{topic} A: {memory_allocated / 1024**2} MB, R: {memory_reserved / 1024**2} MB")
 
 
     retr_model_name = args.retr_model_name_or_path
@@ -100,7 +100,7 @@ def main():
         )
         wandb.watch(retr_model, log_freq=10)
 
-    retr_model.train()
+    retr_model.eval()
     infer_model.eval()
 
     def compute_embeddings(model, documents):
@@ -109,7 +109,6 @@ def main():
         model_output = model(**documents)
         # Perform pooling. In this case, cls pooling.
         sentence_embeddings = model_output[0][:, 0]
-        # sentence_embeddings = sentence_embeddings.to("cpu")
         # normalize embeddings
         sentence_embeddings_normal = F.normalize(sentence_embeddings, p=2, dim=1)
         del documents, model_output, sentence_embeddings
@@ -162,10 +161,10 @@ def main():
     beta = args.beta_value
     data_collator = DataCollatorWithPadding(tokenizer=retr_tokenizer)
     train_data_loader = DataLoader(
-        input_training_dataset, shuffle=True, batch_size=batch_size, collate_fn=data_collator
+        input_training_dataset, shuffle=False, batch_size=batch_size, collate_fn=data_collator
     )
     eval_data_loader = DataLoader(
-        input_eval_dataset, shuffle=True, batch_size=batch_size, collate_fn=data_collator
+        input_eval_dataset, shuffle=False, batch_size=batch_size, collate_fn=data_collator
     )
 
     optimizer = AdamW(retr_model.parameters(), lr=args.learning_rate)
@@ -185,9 +184,34 @@ def main():
     def inner_tokenize_function(samples):
         return infer_tokenizer(samples["text"], truncation=True, padding=True, return_tensors="pt")
 
+    def verify_relevancy(response, doc):
+        return response.split('(')[0] in doc
+
+    def get_relevant_docs(batch_data, documents):
+        rel_docs = []
+        bs = len(batch_data["response"])
+        for response in batch_data["response"]:
+            for i, doc in enumerate(documents):
+                if verify_relevancy(response, doc):
+                    rel_docs.append(i)
+                    break
+        return torch.tensor(rel_docs).unsqueeze(-1)
+
+    def accumulate_ranks_at_n(ranks, documents_per_query, documents, batch_data, k, index):
+        rel = get_relevant_docs(batch_data, documents).to("cuda")
+        if index == 0:
+            logger.info(f"DOCS PER QUERY\n{documents_per_query}")
+            logger.info(f"RELEVANT DOCS\n{rel}")
+        for n in range(k):
+            rank_at_k = torch.any(documents_per_query[:, :n+1] == rel, dim=-1).sum()
+            ranks[n] += rank_at_k
+        return ranks
+
     # evaluation function
     def evaluate(embedded_documents):
+        retr_model.eval()
         with torch.no_grad():
+            ranks = [0 for _ in range(k)]
             for index, batch in enumerate(eval_data_loader):
                 curr_bs = batch["input_ids"].size(0)
                 # 1.
@@ -200,6 +224,7 @@ def main():
                 top_k_docs = torch.topk(cos_sim, k, dim=-1)  # Size becomes [batch_size, k]
                 documents_per_query = top_k_docs.indices
                 similarities_per_query = top_k_docs.values
+                accumulate_ranks_at_n(ranks, documents_per_query, documents, batch_data, k, index)
                 Pr = F.softmax(similarities_per_query / gamma, dim=1)
                 del embedded_queries, embedded_documents_exp, embedded_queries_exp, cos_sim, top_k_docs, similarities_per_query
                 # 3.
@@ -249,7 +274,13 @@ def main():
                 torch.cuda.empty_cache()
                 if log_wandb:
                     wandb.log({"Evaluation Loss": loss.item()})
-                logger.info(f"EVALUATION LOSS: {loss}")  
+                # logger.info(f"EVALUATION LOSS: {loss}")
+            ranks = [r / len(eval_data_loader.dataset) * 100 for r in ranks]
+            for n in range(k):
+                logger.info(f"RANK@{n+1}: {ranks[n]}")
+                if log_wandb:
+                    wandb.log({f"Rank@{n+1}": ranks[n] for n in range(k)})    
+        retr_model.train()        
 
     """
     (B batch size, L length in tokens of each encoded example in a batch, V vocabulary length)
@@ -264,7 +295,12 @@ def main():
     8. use the perplexities on each input query to compute the distributions Q(d|x,y)
     9. compute the KL divergence between the distributions Pr(d|x) and Q(d|x,y) and average over all input queries
     """
-
+    with torch.no_grad():
+        embedded_documents = compute_embeddings(retr_model, tokenized_documents)
+        embedded_documents2 = compute_embeddings(retr_model, tokenized_documents)
+    print(torch.equal(embedded_documents, embedded_documents2))
+    evaluate(embedded_documents)
+    retr_model.train()
     for epoch in range(num_epochs):
         for index, batch in enumerate(train_data_loader):
             log_mem_usage("BATCH STARTING")
