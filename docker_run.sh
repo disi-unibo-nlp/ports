@@ -5,6 +5,8 @@ COMMAND=${1:-bash}
 # Load keys
 source /home/monaldini/rag-function-calling/keys/keys.sh
 
+export CUDA_VISIBLE_DEVICES=3
+
 # start rag-func-call container
 docker run --name proj \
            -v /home/monaldini/rag-function-calling/main:/proj/main \

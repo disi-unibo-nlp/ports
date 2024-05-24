@@ -30,5 +30,5 @@ python3 /proj/main/main.py --dataset_path $DATASET_PATH \
                 --lr_scheduler $LR_SCHEDULER \
                 --trained_model_save_path $TRAINED_MODEL_SAVE_PATH \
                 --quantize \
-                --log_to_wandb
+                # --log_to_wandb
                 # --quantization_4bit \
