@@ -49,7 +49,7 @@ def main():
         current_device = torch.cuda.current_device()
         memory_allocated = torch.cuda.memory_allocated(current_device)
         memory_reserved = torch.cuda.memory_reserved(current_device)
-        logger.info(f"{topic} A: {memory_allocated / 1024**2} MB, R: {memory_reserved / 1024**2} MB")
+        # logger.info(f"{topic} A: {memory_allocated / 1024**2} MB, R: {memory_reserved / 1024**2} MB")
 
     # load models and tokenizers
     retr_model_name = args.retr_model_name_or_path
@@ -133,6 +133,7 @@ def main():
     )
 
     dataset = load_from_disk(args.dataset_path)
+    dataset = dataset.shuffle(seed=42).flatten_indices()
     query_column = args.query_column
     response_column = args.response_column
     func_text = None
@@ -255,7 +256,7 @@ def main():
         )
         return inner_data_loader
 
-    def get_example_perplexity(outputs, labels, cross_entropy):
+    def get_perplexity_per_sample(outputs, labels, cross_entropy):
         """
         From the inference model's outputs and the labels, compute the perplexity of each example
         """
@@ -300,15 +301,15 @@ def main():
 
     def accumulate_ranks_at_n(ranks, documents_per_query, documents, batch_data, k, index):
         """
-        Compute the ranks@k for the batch, sum them up to the previous batches' values
+        Compute the ranks@n for the batch, sum them up to the previous batches' values
         """
         rel = get_relevant_docs(batch_data, documents).to("cuda")
         if index == 0:
             logger.info(f"DOCS PER QUERY\n{documents_per_query}")
             logger.info(f"RELEVANT DOCS\n{rel}")
         for n in range(k):
-            rank_at_k = torch.any(documents_per_query[:, :n+1] == rel, dim=-1).sum()
-            ranks[n] += rank_at_k
+            rank_at_n = torch.any(documents_per_query[:, :n+1] == rel, dim=-1).sum()
+            ranks[n] += rank_at_n
         return ranks
 
     # evaluation function
@@ -318,6 +319,7 @@ def main():
             for index, batch in enumerate(eval_data_loader):
                 # 1.
                 curr_bs, batch_data = get_queries_from_batch(dataset["test"], batch, index)
+                decoded_batch = retr_tokenizer.batch_decode(batch["input_ids"], skip_special_tokens=True)
                 # 2.
                 documents_per_query, similarities_per_query = get_top_k_docs_per_query(embedded_documents, batch, k)
                 accumulate_ranks_at_n(ranks, documents_per_query, documents, batch_data, k, index)
@@ -334,7 +336,7 @@ def main():
                     labels = inner_batch.pop("labels")
                     with torch.no_grad():
                         outputs = infer_model(**inner_batch)
-                    perplexity = get_example_perplexity(outputs, labels, cross_entropy)
+                    perplexity = get_perplexity_per_sample(outputs, labels, cross_entropy)
                     perplexities.append(perplexity)
                     del outputs, perplexity
                     torch.cuda.empty_cache()
@@ -381,7 +383,7 @@ def main():
                 labels = inner_batch.pop("labels")
                 with torch.no_grad():
                     outputs = infer_model(**inner_batch)
-                perplexity = get_example_perplexity(outputs, labels, cross_entropy)
+                perplexity = get_perplexity_per_sample(outputs, labels, cross_entropy)
                 perplexities.append(perplexity)
                 del outputs, perplexity
                 torch.cuda.empty_cache()
