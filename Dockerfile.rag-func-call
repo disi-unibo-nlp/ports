@@ -37,8 +37,10 @@ RUN pip3 install --upgrade huggingface_hub
 
 # frameworks
 RUN pip3 install llama-index
+RUN pip3 install llama-index-llms-huggingface
+RUN pip3 install llama-index-embeddings-huggingface
 RUN pip3 install langchain
-RUN curl -fsSL https://ollama.com/install.sh | sh
+# RUN curl -fsSL https://ollama.com/install.sh | sh
 
 # for profiling
 RUN pip3 install matplotlib
