@@ -120,8 +120,7 @@ def main():
     INSTRUCTION = (
         "Given a list of functions with their documentation, call the correct function "
         "with the correct parameters in the form function_name(parameter 1, parameter 2). "
-        "Do not add any other text apart from the function call. If you cannot resolve the "
-        "request with the given functions, call irrelevant_function() as a default.\n"
+        "Do not add any other text apart from the function call.\n"
         "Example: Can you add a note saying 'Rembember the milk'? Response: add_note('Remember the milk'). "
         "Here is the documentation of all the functions."
     )
@@ -203,7 +202,7 @@ def main():
     """
     
     # training utility functions
-    def get_queries_from_batch(dataset_split, batch, index):
+    def parse_batch(dataset_split, batch, index):
         """
         From the batch tokenized by the retriever's tokenizer, get the queries and responses in string format
         """
@@ -318,8 +317,7 @@ def main():
             ranks = [0 for _ in range(k)]
             for index, batch in enumerate(eval_data_loader):
                 # 1.
-                curr_bs, batch_data = get_queries_from_batch(dataset["test"], batch, index)
-                decoded_batch = retr_tokenizer.batch_decode(batch["input_ids"], skip_special_tokens=True)
+                curr_bs, batch_data = parse_batch(dataset["test"], batch, index)
                 # 2.
                 documents_per_query, similarities_per_query = get_top_k_docs_per_query(embedded_documents, batch, k)
                 accumulate_ranks_at_n(ranks, documents_per_query, documents, batch_data, k, index)
@@ -364,7 +362,7 @@ def main():
         for index, batch in enumerate(train_data_loader):
             log_mem_usage("BATCH STARTING")
             # 1.
-            curr_bs, batch_data = get_queries_from_batch(dataset["train"], batch, index)
+            curr_bs, batch_data = parse_batch(dataset["train"], batch, index)
             # 2.
             embedded_documents = compute_embeddings(retr_model, tokenized_documents)
             # documents_per_query contains the indices of the top-k documents for each query in the batch

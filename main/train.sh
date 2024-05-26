@@ -1,16 +1,16 @@
 #!/bin/bash
 
-DATASET_PATH="/proj/mounted/overlapping-functions-dataset-shuffled"
+DATASET_PATH="/proj/mounted/overlapping-functions-dataset-no-ir"
 DOCS_PATH="/proj/mounted/documentation.txt"
 RETR_MODEL_NAME_OR_PATH="BAAI/bge-base-en-v1.5"
 INFER_MODEL_NAME_OR_PATH="meta-llama/Meta-Llama-3-8B-Instruct"
 QUERY_COLUMN="query"
 RESPONSE_COLUMN="response"
 BATCH_SIZE=8
-NUM_TRAIN_EPOCHS=7
+NUM_TRAIN_EPOCHS=3
 NUM_RETRIEVED_DOCS_PER_QUERY=3
-GAMMA_VALUE=0.1
-BETA_VALUE=0.3
+GAMMA_VALUE=0.5
+BETA_VALUE=0.5
 LEARNING_RATE=1e-5
 LR_SCHEDULER="cosine"
 TRAINED_MODEL_SAVE_PATH="/proj/mounted/retr_model.pth"
