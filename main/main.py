@@ -207,7 +207,7 @@ def main():
         infer_tokenizer.padding_side='right'
         labels = infer_tokenizer(samples["labels_text"], add_special_tokens=False, truncation=True, padding=True, return_tensors="pt")
         res["labels"] = labels["input_ids"]
-        res["labels_attention_mask"] = labels["attention_mask"]
+        # res["labels_attention_mask"] = labels["attention_mask"]
         infer_tokenizer.padding_side='left'
         return res
 
@@ -308,12 +308,14 @@ def main():
                     eot_vector = logits[token][example].clone()
             eot_reached = False
         # Add padding to the logits to match the target length
-        for _ in range(target - len(logits)):
-            # Create a new tensor of size [b, v] with all zeros
-            new_tensor = torch.full((b, v), WRONG_LOGIT_SCORE).to("cuda")
-            # Set the value at the eos_token_id position to 1
-            new_tensor.scatter_(1, torch.full((b, 1), infer_tokenizer.eos_token_id).to("cuda"), CORRECT_LOGIT_SCORE)
-            logits.append(new_tensor)
+        padding_tensor = logits[-1]
+        logits.extend([padding_tensor.clone()] * (target - len(logits)))
+        # for _ in range(target - len(logits)):
+        #     # # Create a new tensor of size [b, v] with all zeros
+        #     # new_tensor = torch.full((b, v), WRONG_LOGIT_SCORE).to("cuda")
+        #     # # Set the value at the eos_token_id position to 1
+        #     # new_tensor.scatter_(1, torch.full((b, 1), infer_tokenizer.eos_token_id).to("cuda"), CORRECT_LOGIT_SCORE)
+        #     logits.append(padding_tensor.clone())
         full_logits = torch.stack(logits).transpose(0, 1)
         # print(f"LOGITS LABELS MATCH SIZE: {full_logits.size(1) == labels.size(1)}")
         # print(f"LOGITS SIZE: {full_logits.size()}, LABELS SIZE: {labels.size()}")
@@ -329,16 +331,19 @@ def main():
         labels = labels.contiguous()
         logits = logits.contiguous()
 
-        # print("-----------------------")
-        # curr_logits = logits[3]
-        # curr_labels = labels[3]
-        # print(f"LABELS: {curr_labels}")
-        # print(f"PREDS: {torch.argmax(curr_logits, dim=1)}")
-        # curr_loss = cross_entropy(curr_logits, curr_labels)
-        # print(f"LOSS: {curr_loss}")
-        # loss_mean = curr_loss.mean()
-        # print(f"MEAN LOSS: {loss_mean}")
-        # print(f"PERPLEXITY: {torch.exp(loss_mean)}")
+        print("-----------------------")
+        curr_logits = logits[1]
+        curr_labels = labels[1]
+        print(f"LABELS: {curr_labels}")
+        print(f"PREDS: {torch.argmax(curr_logits, dim=1)}")
+        print(f"LABELS TEXT: {infer_tokenizer.decode(curr_labels, skip_special_tokens=False)}")
+        print(f"PREDS TEXT: {infer_tokenizer.decode(torch.argmax(curr_logits, dim=1), skip_special_tokens=False)}")
+        curr_loss = cross_entropy(curr_logits, curr_labels)
+        print(f"LOSS: {curr_loss}")
+        loss_mean = curr_loss.mean()
+        print(f"MEAN LOSS: {loss_mean}")
+        print(f"PERPLEXITY: {torch.exp(loss_mean)}")
+        print("***********************")
         # exit()
 
         elem_wise_loss = cross_entropy(logits.view(-1, logits.size(-1)), labels.view(-1))
@@ -418,7 +423,7 @@ def main():
                 for inner_batch in inner_data_loader:
                     inner_batch = {k: v.to("cuda") for k, v in inner_batch.items()}
                     labels = inner_batch.pop("labels")
-                    labels_attention_mask = inner_batch.pop("labels_attention_mask")
+                    # labels_attention_mask = inner_batch.pop("labels_attention_mask")
                     gen_config["max_new_tokens"] = labels.size(1)
                     with torch.no_grad():
                         outputs = infer_model.generate(**inner_batch, **gen_config)
@@ -427,6 +432,7 @@ def main():
                     perplexities.append(perplexity)
                     del outputs, perplexity
                     torch.cuda.empty_cache()
+                exit()
                 # 8.
                 Q = compute_Q(perplexities, beta)
                 # 9.
