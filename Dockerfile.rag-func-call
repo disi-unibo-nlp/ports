@@ -25,7 +25,8 @@ RUN pip install wrapt --upgrade --ignore-installed
 RUN pip install gdown
 
 # Install PyTorch and related packages (part 1)
-RUN pip3 install -f https://download.pytorch.org/whl/cu118/torch_stable.html torch==2.1.0 torchvision==0.16+cu118
+# RUN pip3 install -f https://download.pytorch.org/whl/cu118/torch_stable.html torch==2.1.0 torchvision==0.16+cu118
+RUN pip3 install -f https://download.pytorch.org/whl/cu118/torch_stable.html torch
 
 # Install other Python packages
 RUN pip3 install --upgrade pandas
@@ -34,12 +35,19 @@ RUN pip3 install --upgrade datasets
 RUN pip3 install --upgrade wandb
 RUN pip3 install --upgrade tqdm
 RUN pip3 install --upgrade huggingface_hub
+RUN pip3 install --no-cache-dir gradio
 
 # frameworks
 RUN pip3 install llama-index
 RUN pip3 install llama-index-llms-huggingface
 RUN pip3 install llama-index-embeddings-huggingface
 RUN pip3 install langchain
+RUN pip3 install llama-index-tools-tavily-research
+RUN pip3 install llama-index-tools-wikipedia
+RUN pip3 install llama-index-tools-yahoo-finance
+RUN pip3 install llama-index-tools-wolfram-alpha
+RUN pip3 install llama-index-tools-notion
+RUN pip3 install llama-index-tools-code-interpreter
 # RUN curl -fsSL https://ollama.com/install.sh | sh
 
 # for profiling
@@ -52,3 +60,5 @@ RUN pip3 install bitsandbytes
 
 # Back to default frontend
 ENV DEBIAN_FRONTEND=dialog
+EXPOSE 7860
+ENV GRADIO_SERVER_NAME="0.0.0.0"
