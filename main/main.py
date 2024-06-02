@@ -77,7 +77,7 @@ def main():
         )
         infer_model = AutoModelForCausalLM.from_pretrained(
             infer_model_name,
-            torch_dtype=torch.bfloat16,
+            # torch_dtype=torch.bfloat16,
             quantization_config=quantization_config
         )
     else:
