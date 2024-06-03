@@ -31,6 +31,7 @@ RUN pip3 install -f https://download.pytorch.org/whl/cu118/torch_stable.html tor
 # Install other Python packages
 RUN pip3 install --upgrade pandas
 RUN pip3 install --upgrade transformers
+RUN pip3 install --upgrade trl
 RUN pip3 install --upgrade datasets
 RUN pip3 install --upgrade wandb
 RUN pip3 install --upgrade tqdm
