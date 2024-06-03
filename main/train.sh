@@ -2,20 +2,20 @@
 
 DATASET_PATH="/proj/mounted/overlapping-functions-dataset-no-ir"
 DOCS_PATH="/proj/mounted/documentation.txt"
-RETR_MODEL_NAME_OR_PATH="BAAI/bge-base-en-v1.5"
-INFER_MODEL_NAME_OR_PATH="meta-llama/Meta-Llama-3-8B-Instruct"
+RETR_MODEL_NAME_OR_PATH="/proj/mounted/models--BAAI--bge-base-en-v1.5/snapshots/a5beb1e3e68b9ab74eb54cfd186867f64f240e1a/"
+INFER_MODEL_NAME_OR_PATH="/proj/mounted/models--meta-llama--Meta-Llama-3-8B-Instruct/snapshots/c4a54320a52ed5f88b7a2f84496903ea4ff07b45"
 QUERY_COLUMN="query"
 RESPONSE_COLUMN="response"
 BATCH_SIZE=8
-NUM_TRAIN_EPOCHS=3
+NUM_TRAIN_EPOCHS=40
 NUM_RETRIEVED_DOCS_PER_QUERY=3
-GAMMA_VALUE=0.5
-BETA_VALUE=0.5
+GAMMA_VALUE=1
+BETA_VALUE=1
 LEARNING_RATE=1e-5
 LR_SCHEDULER="cosine"
 TRAINED_MODEL_SAVE_PATH="/proj/mounted/retr_model.pth"
 
-python3 /proj/main/main.py --dataset_path $DATASET_PATH \
+python3 /proj/main/main-forward.py --dataset_path $DATASET_PATH \
                 --docs_path $DOCS_PATH \
                 --retr_model_name_or_path $RETR_MODEL_NAME_OR_PATH \
                 --infer_model_name_or_path $INFER_MODEL_NAME_OR_PATH \

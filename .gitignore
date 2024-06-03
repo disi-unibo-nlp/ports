@@ -161,5 +161,8 @@ cython_debug/
 
 */wandb/*
 *.out
-mounted/
+mounted/models*
+mounted/non-overlapping-functions-dataset
+mounted/overlapping-functions-dataset
+mounted/*log*
 keys/
