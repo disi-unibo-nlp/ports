@@ -37,6 +37,7 @@ RUN pip3 install --upgrade wandb
 RUN pip3 install --upgrade tqdm
 RUN pip3 install --upgrade huggingface_hub
 RUN pip3 install --no-cache-dir gradio
+RUN pip3 install trl
 
 # frameworks
 RUN pip3 install llama-index

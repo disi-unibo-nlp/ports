@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from typing import Optional
 
 @dataclass
 class PyTorchTrainingParams:
@@ -19,6 +20,11 @@ class PyTorchTrainingParams:
     infer_model_name_or_path: str = field(
         default="meta-llama/Meta-Llama-3-8B-Instruct",
         metadata={"help": "Path to pretrained inference model or model identifier from huggingface.co/models"}
+    )
+
+    infer_model_type: str = field(
+        default="llama3",
+        metadata={"help": "The type of the model to train."}
     )
 
     query_column: str = field(
@@ -68,6 +74,11 @@ class PyTorchTrainingParams:
     log_to_wandb: bool = field(
         default=False,
         metadata={"help": "Whether to log training progress to Weights & Biases."}
+    )
+
+    wandb_proj_name: Optional[str] = field(
+        default=None,
+        metadata={"help": "Weights & Biases project name."}
     )
 
 

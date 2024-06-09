@@ -21,6 +21,7 @@ from torch.nn import CrossEntropyLoss, KLDivLoss
 from tqdm.auto import tqdm
 from huggingface_hub import login
 from src.data_classes import PyTorchTrainingParams
+from src.prompts import PROMPTS
 import logging
 import wandb
 
@@ -57,7 +58,7 @@ def main():
     infer_model_name = args.infer_model_name_or_path
     retr_tokenizer = AutoTokenizer.from_pretrained(retr_model_name)
     retr_model = AutoModel.from_pretrained(retr_model_name).to("cuda")
-    infer_tokenizer = AutoTokenizer.from_pretrained(infer_model_name)
+    infer_tokenizer = AutoTokenizer.from_pretrained(infer_model_name, trust_remote_code=True)
     if infer_tokenizer.pad_token is None:
         logger.info("No padding token - using EOS instead")
         infer_tokenizer.pad_token = infer_tokenizer.eos_token
@@ -73,20 +74,28 @@ def main():
         infer_model = AutoModelForCausalLM.from_pretrained(
             infer_model_name,
             # torch_dtype=torch.bfloat16,
-            quantization_config=quantization_config
+            quantization_config=quantization_config,
+            trust_remote_code=True,
+            attn_implementation="flash_attention_2"
         )
     else:
-        infer_model = AutoModelForCausalLM.from_pretrained(infer_model_name, torch_dtype=torch.bfloat16).to("cuda")
+        infer_model = AutoModelForCausalLM.from_pretrained(
+            infer_model_name, 
+            torch_dtype=torch.bfloat16, 
+            trust_remote_code=True,
+            attn_implementation="flash_attention_2"
+        ).to("cuda")
 
     logger.info(f"Model dtype: {next(infer_model.parameters()).dtype}")
 
     # initialize wandb run
     if log_wandb:
         wandb_key = os.getenv('WANDB_KEY')
+        name = args.wandb_proj_name
         wandb.login(key=wandb_key)
         wandb.init(
             project='fine-tuning-retriever',
-            name=f"training run - {args.dataset_path.split('/')[-1]}",
+            name=name if name else f"training run - {args.dataset_path.split('/')[-1]}",
             config={
                 "retr_model_name_or_path": args.retr_model_name_or_path,
                 "infer_model_name_or_path": args.infer_model_name_or_path,
@@ -118,6 +127,37 @@ def main():
         del documents, model_output, sentence_embeddings
         return sentence_embeddings_normal
 
+    ############################
+    print(infer_tokenizer.all_special_tokens) 
+    print(infer_tokenizer.all_special_ids)    
+    print(infer_tokenizer.eos_token)    
+    print(infer_tokenizer.pad_token)    
+
+    # messages = [
+    #     {"role": "user", "content": "How are you? Reply in one sentence only."},
+    #     # {"role": "assistant", "content": "Sure! Here are some ways to eat bananas and dragonfruits together: 1. Banana and dragonfruit smoothie: Blend bananas and dragonfruits together with some milk and honey. 2. Banana and dragonfruit salad: Mix sliced bananas and dragonfruits together with some lemon juice and honey."},
+    #     # {"role": "user", "content": "What about solving an 2x + 3 = 7 equation?"},
+    # ]
+
+    # input_ids = infer_tokenizer.apply_chat_template(
+    #     messages,
+    #     add_generation_prompt=True,
+    #     return_tensors="pt"
+    # ).to("cuda")
+
+    # generation_args = {
+    #     "max_new_tokens": 500,
+    #     # "return_full_text": True,
+    #     "temperature": 0.0,
+    #     "do_sample": False,
+    # }
+    # output = infer_model.generate(input_ids, **generation_args)
+    # response = output[0]
+    # print(infer_tokenizer.decode(response, skip_special_tokens=False))
+    exit()
+    ############################
+
+
     # data preparation
     INSTRUCTION = (
         "Given a list of functions with their documentation, call the correct function "
@@ -126,13 +166,15 @@ def main():
         "Example: Can you add a note saying 'Rembember the milk'? Response: add_note('Remember the milk'). "
         "Here is the documentation of all the functions."
     )
-    prompt_template = (
-        f'<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{INSTRUCTION} {{}}'
-        f'<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nQuery: {{}} Response:<|eot_id|>'
-        f'<|start_header_id|>assistant<|end_header_id|>\n\n{{}}{infer_tokenizer.eos_token}'
-    )
-    ANSWER = '<|start_header_id|>assistant<|end_header_id|>\n\n'
-
+    # prompt_template = (
+    #     f'<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{INSTRUCTION} {{}}'
+    #     f'<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nQuery: {{}} Response:<|eot_id|>'
+    #     f'<|start_header_id|>assistant<|end_header_id|>\n\n{{}}{infer_tokenizer.eos_token}'
+    # )
+    # ANSWER = '<|start_header_id|>assistant<|end_header_id|>\n\n'
+    infer_model_type = args.infer_model_type
+    prompt_template = PROMPTS[infer_model_type]["prompt_template"]
+    ANSWER = PROMPTS[infer_model_type]["answer_template"]
     dataset = load_from_disk(args.dataset_path)
     dataset = dataset.shuffle(seed=42).flatten_indices()
     query_column = args.query_column
@@ -238,6 +280,7 @@ def main():
         """
         prompts = [
                 prompt_template.format(
+                    INSTRUCTION,
                     documents[doc_index], 
                     batch_data[query_column][data_index], 
                     batch_data[response_column][data_index]
@@ -263,7 +306,7 @@ def main():
         )
         return inner_data_loader
 
-    def get_perplexity_per_sample(outputs, labels, cross_entropy):
+    def get_perplexity_per_sample(outputs, labels, cross_entropy, index, inner_index, input_ids):
         """
         From the inference model's outputs and the labels, compute the perplexity of each example
         """
@@ -272,30 +315,32 @@ def main():
         shift_logits = logits[..., :-1, :].contiguous()
 
         # log data of a specific example
-        # if index == 1 and inner_index == 1:
-        #     print("-----------------------")
-        #     curr_logits = shift_logits[0]
-        #     curr_labels = shift_labels[0]
-        #     print(f"ORIGINAL TEXT: {infer_tokenizer.decode(input_ids[0], skip_special_tokens=False)}")
-        #     print(f"LABEL TEXT: {infer_tokenizer.convert_ids_to_tokens(curr_labels[-10:-1], skip_special_tokens=False)}")
-        #     print(f"PRED TEXT: {infer_tokenizer.convert_ids_to_tokens(torch.argmax(curr_logits[-10:-1], dim=1), skip_special_tokens=False)}")
-        #     print(f"LABELS: {curr_labels}")
-        #     print(f"PREDS: {torch.argmax(curr_logits, dim=1)}")
-        #     curr_loss = cross_entropy(curr_logits, curr_labels)
-        #     print(f"LOSS: {curr_loss}")
-        #     num_elems = torch.sum(curr_labels.ne(-100))
-        #     loss_mean = curr_loss.sum() / num_elems
-        #     print(f"MEAN LOSS: {loss_mean}")
-        #     print(f"PERPLEXITY: {torch.exp(loss_mean)}")
-        #     print("***********************")
-        #     exit()
+        if index == 1 and inner_index == 1:
+            print("-----------------------")
+            curr_logits = shift_logits[3]
+            curr_labels = shift_labels[3]
+            start_id = -8
+            print(f"ORIGINAL TEXT: {infer_tokenizer.decode(input_ids[3], skip_special_tokens=False)}")
+            print(f"LABEL TEXT: {infer_tokenizer.convert_ids_to_tokens(curr_labels[start_id:-1], skip_special_tokens=False)}")
+            print(f"PRED TEXT: {infer_tokenizer.convert_ids_to_tokens(torch.argmax(curr_logits[start_id:-1], dim=1), skip_special_tokens=False)}")
+            print(f"LABELS: {curr_labels}")
+            print(f"PREDS: {torch.argmax(curr_logits, dim=1)}")
+            curr_loss = cross_entropy(curr_logits, curr_labels)
+            # print(f"LOSS: {curr_loss}")
+            print(f"LOSS: {curr_loss[start_id:-1]}")
+            num_elems = torch.sum(curr_labels.ne(-100))
+            loss_mean = curr_loss.sum() / num_elems
+            print(f"MEAN LOSS: {loss_mean}")
+            print(f"PERPLEXITY: {torch.exp(loss_mean)}")
+            print("***********************")
+            exit()
 
         elem_wise_loss = cross_entropy(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
         loss_sum_per_sample = elem_wise_loss.view(shift_logits.size(0), shift_logits.size(1)).sum(dim=1)
         num_elems_per_sample = torch.sum(shift_labels.ne(-100), dim=1)
         loss_per_sample = loss_sum_per_sample / num_elems_per_sample 
-        perplexity_per_sample = torch.exp(loss_per_sample)
-        print(f"PERPLEXITY: {perplexity_per_sample}")
+        perplexity_per_sample = -torch.exp(loss_per_sample)
+        print(f"PERPLEXITY PER SAMPLE: {-perplexity_per_sample}")
         return perplexity_per_sample
 
     def compute_Q(perplexities, beta):
@@ -367,7 +412,7 @@ def main():
                     labels = inner_batch.pop("labels")
                     with torch.no_grad():
                         outputs = infer_model(**inner_batch)
-                    perplexity = get_perplexity_per_sample(outputs, labels, cross_entropy)
+                    perplexity = get_perplexity_per_sample(outputs, labels, cross_entropy, index, inner_index, inner_batch["input_ids"])
                     perplexities.append(perplexity)
                     del outputs, perplexity
                     torch.cuda.empty_cache()
@@ -411,12 +456,12 @@ def main():
             inner_data_loader = prepare_inner_data_loader(prompts, curr_bs, inner_tokenize_function, inner_data_collator)
             # 5., 6. and 7.
             perplexities = []
-            for inner_batch in inner_data_loader:
+            for inner_index, inner_batch in enumerate(inner_data_loader):
                 inner_batch = {k: v.to("cuda") for k, v in inner_batch.items()}
                 labels = inner_batch.pop("labels")
                 with torch.no_grad():
                     outputs = infer_model(**inner_batch)
-                perplexity = get_perplexity_per_sample(outputs, labels, cross_entropy)
+                perplexity = get_perplexity_per_sample(outputs, labels, cross_entropy, index, inner_index, inner_batch["input_ids"])
                 perplexities.append(perplexity)
                 del outputs, perplexity
                 torch.cuda.empty_cache()
