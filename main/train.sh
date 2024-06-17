@@ -1,13 +1,13 @@
 #!/bin/bash
 
-DATASET_PATH="/proj/mounted/overlapping-functions-dataset-no-ir"
+DATASET_PATH="/proj/mounted/datasets/overlapping-functions-dataset-no-ir"
 DOCS_PATH="/proj/mounted/documentation.txt"
-RETR_MODEL_NAME_OR_PATH="/proj/mounted/models--BAAI--bge-base-en-v1.5/snapshots/a5beb1e3e68b9ab74eb54cfd186867f64f240e1a/"
+RETR_MODEL_NAME_OR_PATH="/proj/mounted/models/models--BAAI--bge-base-en-v1.5/snapshots/a5beb1e3e68b9ab74eb54cfd186867f64f240e1a/"
 # RETR_MODEL_NAME_OR_PATH="FacebookAI/roberta-base"
-# INFER_MODEL_NAME_OR_PATH="/proj/mounted/models--meta-llama--Meta-Llama-3-8B-Instruct/snapshots/c4a54320a52ed5f88b7a2f84496903ea4ff07b45"
-# INFER_MODEL_TYPE="llama3"
-INFER_MODEL_NAME_OR_PATH="microsoft/Phi-3-small-8k-instruct"
-INFER_MODEL_TYPE="phi3"
+INFER_MODEL_NAME_OR_PATH="/proj/mounted/models/models--meta-llama--Meta-Llama-3-8B-Instruct/snapshots/c4a54320a52ed5f88b7a2f84496903ea4ff07b45"
+INFER_MODEL_TYPE="llama3"
+# INFER_MODEL_NAME_OR_PATH="microsoft/Phi-3-small-8k-instruct"
+# INFER_MODEL_TYPE="phi3"
 QUERY_COLUMN="query"
 RESPONSE_COLUMN="response"
 BATCH_SIZE=8

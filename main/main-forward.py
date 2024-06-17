@@ -127,37 +127,6 @@ def main():
         del documents, model_output, sentence_embeddings
         return sentence_embeddings_normal
 
-    ############################
-    print(infer_tokenizer.all_special_tokens) 
-    print(infer_tokenizer.all_special_ids)    
-    print(infer_tokenizer.eos_token)    
-    print(infer_tokenizer.pad_token)    
-
-    # messages = [
-    #     {"role": "user", "content": "How are you? Reply in one sentence only."},
-    #     # {"role": "assistant", "content": "Sure! Here are some ways to eat bananas and dragonfruits together: 1. Banana and dragonfruit smoothie: Blend bananas and dragonfruits together with some milk and honey. 2. Banana and dragonfruit salad: Mix sliced bananas and dragonfruits together with some lemon juice and honey."},
-    #     # {"role": "user", "content": "What about solving an 2x + 3 = 7 equation?"},
-    # ]
-
-    # input_ids = infer_tokenizer.apply_chat_template(
-    #     messages,
-    #     add_generation_prompt=True,
-    #     return_tensors="pt"
-    # ).to("cuda")
-
-    # generation_args = {
-    #     "max_new_tokens": 500,
-    #     # "return_full_text": True,
-    #     "temperature": 0.0,
-    #     "do_sample": False,
-    # }
-    # output = infer_model.generate(input_ids, **generation_args)
-    # response = output[0]
-    # print(infer_tokenizer.decode(response, skip_special_tokens=False))
-    exit()
-    ############################
-
-
     # data preparation
     INSTRUCTION = (
         "Given a list of functions with their documentation, call the correct function "
@@ -315,25 +284,24 @@ def main():
         shift_logits = logits[..., :-1, :].contiguous()
 
         # log data of a specific example
-        if index == 1 and inner_index == 1:
-            print("-----------------------")
-            curr_logits = shift_logits[3]
-            curr_labels = shift_labels[3]
-            start_id = -8
-            print(f"ORIGINAL TEXT: {infer_tokenizer.decode(input_ids[3], skip_special_tokens=False)}")
-            print(f"LABEL TEXT: {infer_tokenizer.convert_ids_to_tokens(curr_labels[start_id:-1], skip_special_tokens=False)}")
-            print(f"PRED TEXT: {infer_tokenizer.convert_ids_to_tokens(torch.argmax(curr_logits[start_id:-1], dim=1), skip_special_tokens=False)}")
-            print(f"LABELS: {curr_labels}")
-            print(f"PREDS: {torch.argmax(curr_logits, dim=1)}")
-            curr_loss = cross_entropy(curr_logits, curr_labels)
-            # print(f"LOSS: {curr_loss}")
-            print(f"LOSS: {curr_loss[start_id:-1]}")
-            num_elems = torch.sum(curr_labels.ne(-100))
-            loss_mean = curr_loss.sum() / num_elems
-            print(f"MEAN LOSS: {loss_mean}")
-            print(f"PERPLEXITY: {torch.exp(loss_mean)}")
-            print("***********************")
-            exit()
+        # if index == 1 and inner_index == 1:
+        #     print("-----------------------")
+        #     curr_logits = shift_logits[3]
+        #     curr_labels = shift_labels[3]
+        #     start_id = -8
+        #     print(f"ORIGINAL TEXT: {infer_tokenizer.decode(input_ids[3], skip_special_tokens=False)}")
+        #     print(f"LABEL TEXT: {infer_tokenizer.convert_ids_to_tokens(curr_labels[start_id:-1], skip_special_tokens=False)}")
+        #     print(f"PRED TEXT: {infer_tokenizer.convert_ids_to_tokens(torch.argmax(curr_logits[start_id:-1], dim=1), skip_special_tokens=False)}")
+        #     print(f"LABELS: {curr_labels}")
+        #     print(f"PREDS: {torch.argmax(curr_logits, dim=1)}")
+        #     curr_loss = cross_entropy(curr_logits, curr_labels)
+        #     # print(f"LOSS: {curr_loss}")
+        #     print(f"LOSS: {curr_loss[start_id:-1]}")
+        #     num_elems = torch.sum(curr_labels.ne(-100))
+        #     loss_mean = curr_loss.sum() / num_elems
+        #     print(f"MEAN LOSS: {loss_mean}")
+        #     print(f"PERPLEXITY: {torch.exp(loss_mean)}")
+        #     print("***********************")
 
         elem_wise_loss = cross_entropy(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
         loss_sum_per_sample = elem_wise_loss.view(shift_logits.size(0), shift_logits.size(1)).sum(dim=1)
