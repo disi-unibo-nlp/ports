@@ -168,3 +168,4 @@ mounted/datasets/non-overlapping-functions-dataset
 mounted/datasets/overlapping-functions-dataset
 mounted/*log*
 keys/
+*.pth

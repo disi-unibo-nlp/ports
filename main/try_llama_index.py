@@ -23,9 +23,8 @@ import gradio as gr
 hf_token = os.getenv('HF_KEY')
 notion_token = os.getenv('NOTION_KEY')
 wolfram_token = os.getenv('WOLFRAM_APP_ID')
-# retr_model_name_or_path = "/proj/mounted/models--BAAI--bge-base-en-v1.5/snapshots/a5beb1e3e68b9ab74eb54cfd186867f64f240e1a/"
-retr_model_name_or_path = "BAAI/bge-base-en-v1.5"
-infer_model_name_or_path = "/proj/mounted/models--meta-llama--Meta-Llama-3-8B-Instruct/snapshots/c4a54320a52ed5f88b7a2f84496903ea4ff07b45"
+retr_model_name_or_path = "/proj/mounted/models/models--BAAI--bge-base-en-v1.5/snapshots/a5beb1e3e68b9ab74eb54cfd186867f64f240e1a/"
+infer_model_name_or_path = "/proj/mounted/models/models--meta-llama--Meta-Llama-3-8B-Instruct/snapshots/c4a54320a52ed5f88b7a2f84496903ea4ff07b45"
 
 # WARNING: 4-BIT ENCODING DONE HERE, CONSIDER CHANGING (code from llamaindex llama 3 cookbook from)
 # quantization_config = BitsAndBytesConfig(
@@ -89,39 +88,42 @@ obj_index = ObjectIndex.from_objects(
     all_tools,
     index_cls=VectorStoreIndex,
 )
-obj_retriever = obj_index.as_retriever(similarity_top_k=2)
+obj_retriever = obj_index.as_retriever(similarity_top_k=5)
 
-# system_message = (
-#     "You are a model focused on function calling. You will be given a query and some tools to leverage. "
-#     "If you find it useful, you can call the tools to help answer the query. "
-#     "Just make sure to read the tools documentation well and understand the right parameters to pass."
-# )
+system_message = (
+    "You are a model focused on function calling. You will be given a query and some tools to leverage. "
+    "If you find it useful, you can call the tools to help answer the query. "
+    "Just make sure to read the tools documentation well and understand the right parameters to pass."
+)
 
-# prompt_template = (
-#     f'<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{system_message}<|eot_id|>'
-#     f'<|start_header_id|>user<|end_header_id|>\n\n{{}}<|eot_id|>'
-#     '<|start_header_id|>assistant<|end_header_id|>\n\n'
-# )
+prompt_template = (
+    f'<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{system_message}<|eot_id|>'
+    f'<|start_header_id|>user<|end_header_id|>\n\n{{}}<|eot_id|>'
+    '<|start_header_id|>assistant<|end_header_id|>\n\n'
+)
 # get tools retrieved
-# retrieved_tools_example = obj_retriever.retrieve(query)
+# retrieved_tools_example = obj_retriever.retrieve("Who is Ben Affleck married to?")
 # for i, tool in enumerate(retrieved_tools_example):
 #     print(f"Metadata for tool {i}: {tool.metadata}")
-
-agent = ReActAgent.from_tools(tool_retriever=obj_retriever, llm=llm, verbose=True)
+# print(len(all_tools))
+# agent = ReActAgent.from_tools(tool_retriever=obj_retriever, llm=llm, verbose=True)
+# WITHOUT TOOL RETRIEVER
+agent = ReActAgent.from_tools(all_tools, llm=llm, verbose=True)
 # response = agent.chat(query)
 # print(response)
 # for llm querying only: response = llm.complete("How are you?" + tokenizer.eos_token)
 
 def run_query(query):
-    # output = io.StringIO()
-    # old_stdout = sys.stdout
-    # sys.stdout = output
     response = agent.chat(query)
-    # sys.stdout = old_stdout
-    # verbose_output = output.getvalue()
-    return response
+    retrieved_tools = obj_retriever.retrieve(query)
+    names = [tool.metadata.name for tool in retrieved_tools]
+    return response, names
 
-iface = gr.Interface(fn=run_query, inputs="text", outputs="text").launch()
+iface = gr.Interface(
+    fn=run_query,
+    inputs=gr.Textbox(label="Query Input"),
+    outputs=[gr.Textbox(label="Chat Response"), gr.Textbox(label="Tool Names")],
+).launch(share=True)
 
 
 
