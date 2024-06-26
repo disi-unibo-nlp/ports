@@ -47,11 +47,11 @@ def main():
     logger.addHandler(file_handler)
     logger.addHandler(stream_handler)
 
-    def log_mem_usage(topic):
-        current_device = torch.cuda.current_device()
-        memory_allocated = torch.cuda.memory_allocated(current_device)
-        memory_reserved = torch.cuda.memory_reserved(current_device)
-        # logger.info(f"{topic} A: {memory_allocated / 1024**2} MB, R: {memory_reserved / 1024**2} MB")
+    # def log_mem_usage(topic):
+    #     current_device = torch.cuda.current_device()
+    #     memory_allocated = torch.cuda.memory_allocated(current_device)
+    #     memory_reserved = torch.cuda.memory_reserved(current_device)
+    #     # logger.info(f"{topic} A: {memory_allocated / 1024**2} MB, R: {memory_reserved / 1024**2} MB")
 
     # load models and tokenizers
     retr_model_name = args.retr_model_name_or_path
@@ -312,7 +312,7 @@ def main():
         loss_per_sample = loss_sum_per_sample / num_elems_per_sample 
         # perplexity_per_sample = -torch.exp(loss_per_sample)
         # print(f"PERPLEXITY PER SAMPLE: {-perplexity_per_sample}")
-        print(f"LOSS PER SAMPLE: {loss_per_sample}")
+        # print(f"LOSS PER SAMPLE: {loss_per_sample}")
         return -loss_per_sample
 
     def compute_Q(perplexities, beta):
@@ -354,8 +354,8 @@ def main():
         """
         rel = get_relevant_docs(batch_data, documents).to("cuda")
         # if index == 0:
-        logger.info(f"DOCS PER QUERY\n{documents_per_query}")
-        logger.info(f"RELEVANT DOCS\n{rel}")
+        # logger.info(f"DOCS PER QUERY\n{documents_per_query}")
+        # logger.info(f"RELEVANT DOCS\n{rel}")
         for n in range(k):
             rank_at_n = torch.any(documents_per_query[:, :n+1] == rel, dim=-1).sum()
             ranks[n] += rank_at_n
@@ -412,7 +412,7 @@ def main():
     retr_model.train()
     for epoch in range(num_epochs):
         for index, batch in enumerate(train_data_loader):
-            log_mem_usage("BATCH STARTING")
+            # log_mem_usage("BATCH STARTING")
             # 1.
             curr_bs, batch_data = parse_batch(dataset["train"], batch, index)
             # 2.
@@ -441,7 +441,7 @@ def main():
             Q = compute_Q(perplexities, beta)
             # 9.
             loss = compute_loss(Q, Pr, kl_div)
-            log_mem_usage(f"BACKWARD STARTING WITH LOSS {loss}")
+            # log_mem_usage(f"BACKWARD STARTING WITH LOSS {loss}")
             loss.backward()
             optimizer.step()
             lr_scheduler.step()
@@ -461,7 +461,7 @@ def main():
     logger.info("TRAINING FINISHED.")
     if log_wandb:
         wandb.finish()
-    torch.save(retr_model.state_dict(), args.trained_model_save_path)
+    # torch.save(retr_model.state_dict(), args.trained_model_save_path)
 
 if __name__ == "__main__":
     main()

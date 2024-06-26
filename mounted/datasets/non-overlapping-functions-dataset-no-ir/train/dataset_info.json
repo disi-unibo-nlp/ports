@@ -6,7 +6,7 @@
   "dataset_size": 28397,
   "description": "",
   "download_checksums": {
-    "/proj/mounted/fine-tuning-no-irrelevant-func.csv": {
+    "/proj/mounted/datasets/fine-tuning-no-irrelevant-func.csv": {
       "num_bytes": 27453,
       "checksum": null
     }

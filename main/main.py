@@ -37,21 +37,21 @@ def main():
     # set up logging
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.DEBUG)
-    file_handler = logging.FileHandler('/proj/mounted/log.out', mode='w')
-    file_handler.setLevel(logging.DEBUG)
+    # file_handler = logging.FileHandler('/proj/mounted/log.out', mode='w')
+    # file_handler.setLevel(logging.DEBUG)
     stream_handler = logging.StreamHandler()
     stream_handler.setLevel(logging.DEBUG)
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    file_handler.setFormatter(formatter)
+    # file_handler.setFormatter(formatter)
     stream_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
+    # logger.addHandler(file_handler)
     logger.addHandler(stream_handler)
 
-    def log_mem_usage(topic):
-        current_device = torch.cuda.current_device()
-        memory_allocated = torch.cuda.memory_allocated(current_device)
-        memory_reserved = torch.cuda.memory_reserved(current_device)
-        # logger.info(f"{topic} A: {memory_allocated / 1024**2} MB, R: {memory_reserved / 1024**2} MB")
+    # def log_mem_usage(topic):
+    #     current_device = torch.cuda.current_device()
+    #     memory_allocated = torch.cuda.memory_allocated(current_device)
+    #     memory_reserved = torch.cuda.memory_reserved(current_device)
+    #     # logger.info(f"{topic} A: {memory_allocated / 1024**2} MB, R: {memory_reserved / 1024**2} MB")
 
     # load models and tokenizers
     retr_model_name = args.retr_model_name_or_path
@@ -68,8 +68,8 @@ def main():
             load_in_8bit=False if args.quantization_4bit else True,
             load_in_4bit=True if args.quantization_4bit else False,
             # bnb_4bit_use_double_quant=True,
-            # bnb_4bit_quant_type="nf4",
-            # bnb_4bit_compute_dtype=torch.bfloat16
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16
         )
         infer_model = AutoModelForCausalLM.from_pretrained(
             infer_model_name,
@@ -309,7 +309,7 @@ def main():
         loss_per_sample = loss_sum_per_sample / num_elems_per_sample 
         # perplexity_per_sample = -torch.exp(loss_per_sample)
         # print(f"PERPLEXITY PER SAMPLE: {-perplexity_per_sample}")
-        print(f"LOSS PER SAMPLE: {loss_per_sample}")
+        # print(f"LOSS PER SAMPLE: {loss_per_sample}")
         return -loss_per_sample
 
     def compute_Q(perplexities, beta):
@@ -409,7 +409,7 @@ def main():
     retr_model.train()
     for epoch in range(num_epochs):
         for index, batch in enumerate(train_data_loader):
-            log_mem_usage("BATCH STARTING")
+            # log_mem_usage("BATCH STARTING")
             # 1.
             curr_bs, batch_data = parse_batch(dataset["train"], batch, index)
             # 2.
@@ -438,7 +438,7 @@ def main():
             Q = compute_Q(perplexities, beta)
             # 9.
             loss = compute_loss(Q, Pr, kl_div)
-            log_mem_usage(f"BACKWARD STARTING WITH LOSS {loss}")
+            # log_mem_usage(f"BACKWARD STARTING WITH LOSS {loss}")
             loss.backward()
             optimizer.step()
             lr_scheduler.step()

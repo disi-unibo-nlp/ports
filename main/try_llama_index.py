@@ -88,7 +88,7 @@ obj_index = ObjectIndex.from_objects(
     all_tools,
     index_cls=VectorStoreIndex,
 )
-obj_retriever = obj_index.as_retriever(similarity_top_k=5)
+obj_retriever = obj_index.as_retriever(similarity_top_k=1)
 
 system_message = (
     "You are a model focused on function calling. You will be given a query and some tools to leverage. "
