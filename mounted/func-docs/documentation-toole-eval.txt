@@ -1,0 +1,39 @@
+SEOTool: Tool that provides users with SEO analytics content.
+local: Discover and support restaurants, shops & services near you.
+ProductSearch: Find products tailored to your preferences with personalized recommendations and smart filters for specific needs.
+BookTool: AI-powered personalized book recommendations, access to free children's picture books, and the ability to search and create books on Wikidocs.
+VideoSummarizeTool: enerate summaries from YouTube video links, offer question-answering capabilities, analyze and interpret the content of YouTube videos, and support interactions with online video platforms such as YouTube and Daily Motion.
+TripTool: Offer discounted hotel and accommodation bookings, along with personalized hotel and product searches, travel planning, image editing, and more, helping users easily plan their trips and find accommodation and transportation options.
+NASATool: A platform for exploring space, allowing users to search and discover NASA images and utilize NASA's vast media library.
+LawTool: Enables quick search functionality for relevant laws.
+calculator: A calculator app that executes a given formula and returns a result. This app can execute basic and advanced operations.
+AppyPieAIAppBuilder: AI-powered Text-to-App Generator turns your app idea into Android and iOS apps- just provide text input.
+ChatOCR: The best way to read text from from any document. Extract text from scanned PDFs, photos, and even handwriting.
+total_query_meta_search_engine: Go beyond google search: harness the combined power of 70+ search engines for ultimate web discovery.
+Sudoku: This is a sudoku game. You use voice or text to play.
+photorealistic: Generate Photorealistic prompts for Midjourney.
+aiAgents: Unleashing the power of multiple AIs: One goal, limitless productivity.
+Substack_IQ: Search, analyze, & summarize Substack newsletters, retrieve articles, and discover new Substacks!
+haulingbuddies: Locate dependable animal transporters using recommendations, reviews, and regulatory compliance search features.
+CarYardBard: AI-Powered Car Sales Ad Generator for Australian Car Dealers.
+speechki_tts_plugin: The easiest way to convert texts to ready-to-use audio \u2014 download link, audio player page, or embed!
+internetSearch: Search&Browse the web by using Google Search results with KeyMate.AI, your AI-powered web crawler.
+web_requests: Goodbye Knowledge Cutoff, Hello World! This is your AI assistant's web browser. Just enter a URL. Google, Wiki, GitHub.
+abc_to_audio: Converts ABC music notation to WAV, MIDI, and PostScript files.
+blockatlas: Search the US Census! Find data sets, ask questions, and visualize.
+MixerBox_Translate_AI_language_tutor: Translate any language right away! Learn foreign languages easily by conversing with AI tutors!
+decision_journal: Become a better decision maker by keeping track of your decisions and reviewing how they turn out.
+Checkers: This allows you to play a game of checkers.
+ArtCollection: Search through millions of art pieces from The Metropolitan Museum of Art.
+fundsdbsearch: Discover funding opportunities in UK and India on FundsDB. Type in your query in any language or /help for assistance.
+QuiverQuantitative: Access data on congressional stock trading, lobbying, insider trading, and proposed legislation.
+stellarexplorer: Tool for exploring space through images including Mars Rover Photos, NASA image database, and space pictures of the day.
+sakenowa: Find Sake and get detailed information in various ways.
+magi_codex: Ask about Magic: The Gathering cards, rules and interactions.
+speak: Learn how to say anything in another language with Speak, your AI-powered language tutor.
+hackit_web_scanner: AI Powered Web Scanner by HACKIT.
+smarttsicketsai: Get Tickets For All Sports Events, Music Concerts, Theater And More With SmartTicketsAI.com.
+KalendarAI: KalendarAI sales agents generate revenue with potential customers from 200+ million companies globally.
+Algorithma: Shape your virtual life with in this immersive life simulator game to begin Type /start to begin.
+Talkface_IELTS_Prep: Use the latest IELTS Speaking exam questions to prep your IELTS speaking with Talkface.
+socialsearch: The Social Search provides access to tweets, users, followers, images, media and more.

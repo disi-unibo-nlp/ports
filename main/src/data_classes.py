@@ -56,8 +56,8 @@ class PyTorchTrainingParams:
         metadata={"help" : "Type of learning rate scheduler."}
     )
 
-    trained_model_save_path: str = field(
-        default="/proj/mounted/retr_model.pth",
+    trained_model_save_path: Optional[str] = field(
+        default=None,
         metadata={"help": "Path to save the trained model."}
     )
 
@@ -81,4 +81,27 @@ class PyTorchTrainingParams:
         metadata={"help": "Weights & Biases project name."}
     )
 
+    verbose: bool = field(
+        default=False,
+        metadata={"help": "Whether to print training logs."}
+    )
+    
+    seed: int = field(
+        default=42,
+        metadata={"help": "Random seed."}
+    )
 
+    eval_docs_path: Optional[str] = field(
+        default=None,
+        metadata={"help": "The path of the evaluation documents."}
+    )
+
+    modified_loss: bool = field(
+        default=False,
+        metadata={"help": "Whether to use the modified loss function."}
+    )
+
+    dataset_type : str = field(
+        default="tool_selection",
+        metadata={"help": "The type of the dataset."}
+    )
