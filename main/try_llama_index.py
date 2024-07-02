@@ -23,7 +23,8 @@ import gradio as gr
 hf_token = os.getenv('HF_KEY')
 notion_token = os.getenv('NOTION_KEY')
 wolfram_token = os.getenv('WOLFRAM_APP_ID')
-retr_model_name_or_path = "/proj/mounted/models/models--BAAI--bge-base-en-v1.5/snapshots/a5beb1e3e68b9ab74eb54cfd186867f64f240e1a/"
+# retr_model_name_or_path = "/proj/mounted/models/models--BAAI--bge-base-en-v1.5/snapshots/a5beb1e3e68b9ab74eb54cfd186867f64f240e1a/"
+retr_model_name_or_path = "/proj/mounted/retr_model_toole_overlapping.pth"
 infer_model_name_or_path = "/proj/mounted/models/models--meta-llama--Meta-Llama-3-8B-Instruct/snapshots/c4a54320a52ed5f88b7a2f84496903ea4ff07b45"
 
 # WARNING: 4-BIT ENCODING DONE HERE, CONSIDER CHANGING (code from llamaindex llama 3 cookbook from)

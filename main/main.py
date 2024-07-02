@@ -433,7 +433,8 @@ def main():
     if log_wandb:
         wandb.finish()
     if args.trained_model_save_path:
-        torch.save(retr_model.state_dict(), args.trained_model_save_path)
+        # torch.save(retr_model.state_dict(), args.trained_model_save_path)
+        retr_model.save_pretrained(args.trained_model_save_path)
 
 if __name__ == "__main__":
     main()
