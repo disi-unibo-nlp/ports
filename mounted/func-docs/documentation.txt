@@ -225,14 +225,3 @@ def play_video_on_nest_hub(video_service, video_name):
 
     Returns:
     """
-
-
-def open_or_lock_door(status):
-    """
-    Opens or locks a door using a Google-compatible smart lock.
-
-    Parameters:
-    - status (enum): Desired action, chosen from 'open' or 'lock'.
-
-    Returns:
-    """

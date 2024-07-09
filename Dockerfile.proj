@@ -1,4 +1,0 @@
-FROM rag-func-call:latest
-
-# Copy repository
-COPY ./ /proj
