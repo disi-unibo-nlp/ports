@@ -4,8 +4,8 @@
 # INFER_MODEL_TYPE="phi3"
 # DATASET_PATH="/proj/mounted/datasets/non-overlapping-functions-dataset-no-ir"
 # DOCS_PATH="/proj/mounted/func-docs/documentation.txt"
-# RETR_MODEL_NAME_OR_PATH="/proj/mounted/models/models--BAAI--bge-base-en-v1.5/snapshots/a5beb1e3e68b9ab74eb54cfd186867f64f240e1a/"
-RETR_MODEL_NAME_OR_PATH="FacebookAI/roberta-base"
+RETR_MODEL_NAME_OR_PATH="/proj/mounted/models/models--BAAI--bge-base-en-v1.5/snapshots/a5beb1e3e68b9ab74eb54cfd186867f64f240e1a/"
+# RETR_MODEL_NAME_OR_PATH="FacebookAI/roberta-base"
 DOCS_PATH="/proj/mounted/func-docs/documentation-toole-train.txt"
 EVAL_DOCS_PATH="/proj/mounted/func-docs/documentation-toole-eval.txt"
 INFER_MODEL_NAME_OR_PATH="/proj/mounted/models/models--meta-llama--Meta-Llama-3-8B-Instruct/snapshots/c4a54320a52ed5f88b7a2f84496903ea4ff07b45"
@@ -48,6 +48,6 @@ python3 /proj/main/main.py  --dataset_path $DATASET_PATH \
                             --verbose \
                             --modified_loss \
                             --eval_docs_path $EVAL_DOCS_PATH \
-                            --log_to_wandb \
-                            --wandb_proj_name "toole non-overlap diff docs roberta" \
+                            # --log_to_wandb \
+                            # --wandb_proj_name "toole non-overlap diff docs roberta" \
                             # --trained_model_save_path $TRAINED_MODEL_SAVE_PATH \
