@@ -86,14 +86,14 @@ def main():
         sim_per_query_finetuned = [round(num, 3) for num in sim_per_query_finetuned[0].tolist()]
         dataframe_bge = pd.DataFrame(
             {
-                "functions": docs_per_query_base,
-                "similarities": sim_per_query_base,
+                "Tools": docs_per_query_base,
+                "Similarities": sim_per_query_base,
             }
         )
         dataframe_finetuned = pd.DataFrame(
             {
-                "functions": docs_per_query_finetuned,
-                "similarities": sim_per_query_finetuned,
+                "Tools": docs_per_query_finetuned,
+                "Similarities": sim_per_query_finetuned,
             }
         )
         print(dataframe_bge)
@@ -106,28 +106,28 @@ def main():
     def bar_plot_fn(simple, is_finetuned=False):
         return gr.BarPlot(
             simple,
-            x="functions",
-            y="similarities",
-            title="Retrieved Tools by Fine-tuned Encoder (Ours)✅" if is_finetuned else "Retrieved Tools by BGE-base",
-            tooltip=["functions", "similarities"],
+            x="Tools",
+            y="Similarities",
+            title="Retrieved Tools by Fine-tuned Retriever (Ours)✅" if is_finetuned else "Retrieved Tools by BGE-base",
+            tooltip=["Tools", "Similarities"],
             y_lim=[0,1],
             show_label=False,
-            vertical=False,
+            # vertical=False,
         )
 
     def clear_all():
-        return "", "", gr.BarPlot(label="Retrieved Tools by Fine-tuned Encoder (Ours)"), gr.BarPlot(label="Retrieved Tools by BGE-base")
+        return "", "", gr.BarPlot(label="Retrieved Tools by Fine-tuned Retriever (Ours)"), gr.BarPlot(label="Retrieved Tools by BGE-base")
 
 
-    with gr.Blocks(theme=gr.themes.Soft(), css=".gradio-container {font-size: 2rem}") as demo:
-        gr.HTML('<h1 align="center">Retrievers comparison</h1>')
+    with gr.Blocks(theme=gr.themes.Soft()) as demo:
+        gr.HTML('<h1 align="center">Retrievers Comparison</h1>')
         query = gr.Textbox(label="Query", placeholder="Enter your query here")
         with gr.Row():
             submit_btn = gr.Button("Submit", variant="primary", scale=2)
             clear_btn = gr.Button("Clear")
         with gr.Row():
             with gr.Column():
-                ours = gr.BarPlot(label="Retrieved Tools by Fine-tuned Encoder (Ours)")
+                ours = gr.BarPlot(label="Retrieved Tools by Fine-tuned Retriever (Ours)")
             with gr.Column():
                 bge = gr.BarPlot(label="Retrieved Tools by BGE-base")
         correct_tool = gr.Textbox(label="Ground Truth Tool", placeholder="Correct tool's documentation will be displayed here")
@@ -146,8 +146,8 @@ if __name__ == "__main__":
     #     outputs=[
     #         gr.Textbox(label="Retrieved Tools by BGE-base"),
     #         gr.Textbox(label="Retrieval Similarities by BGE-base"),
-    #         gr.Textbox(label="Retrieved Tools by Fine-tuned Encoder **(Ours)**"),
-    #         gr.Textbox(label="Retrieval Similarities by Fine-tuned Encoder **(Ours)**"),
+    #         gr.Textbox(label="Retrieved Tools by Fine-tuned Retriever **(Ours)**"),
+    #         gr.Textbox(label="Retrieval Similarities by Fine-tuned Retriever **(Ours)**"),
     #         gr.Textbox(label="Ground Truth Tool"),
     #     ],
     #     theme=gr.themes.Soft(),

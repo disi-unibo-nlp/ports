@@ -1,0 +1,42 @@
+{
+  "builder_name": "csv",
+  "citation": "",
+  "config_name": "default",
+  "dataset_name": "csv",
+  "dataset_size": 28397,
+  "description": "",
+  "download_checksums": {
+    "/proj/mounted/datasets/fine-tuning-no-irrelevant-func.csv": {
+      "num_bytes": 27453,
+      "checksum": null
+    }
+  },
+  "download_size": 27453,
+  "features": {
+    "query": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "response": {
+      "dtype": "string",
+      "_type": "Value"
+    }
+  },
+  "homepage": "",
+  "license": "",
+  "size_in_bytes": 55850,
+  "splits": {
+    "train": {
+      "name": "train",
+      "num_bytes": 28397,
+      "num_examples": 200,
+      "dataset_name": "csv"
+    }
+  },
+  "version": {
+    "version_str": "0.0.0",
+    "major": 0,
+    "minor": 0,
+    "patch": 0
+  }
+}

@@ -14,7 +14,7 @@ RESPONSE_COLUMN="response"
 BATCH_SIZE=8
 LEARNING_RATE=1e-5
 LR_SCHEDULER="cosine"
-if [[ $DATASET_PATH == *"function"* ]]; then
+if [[ $DATASET_PATH == *"octopus"* ]]; then
     DATASET_TYPE="function_calling"
 else
     DATASET_TYPE="tool_selection"
