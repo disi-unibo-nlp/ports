@@ -25,6 +25,7 @@ from src.data_classes import PyTorchTrainingParams
 from src.prompts import PROMPT_TEMPLATES, INSTRUCTIONS
 import logging
 import wandb
+# from awq import AutoAWQForCausalLM
 
 def main():
     # parse arguments and log to cloud services
@@ -82,6 +83,8 @@ def main():
             trust_remote_code=True,
             attn_implementation="flash_attention_2"
         ).to("cuda")
+    # infer_model = model = AutoAWQForCausalLM.from_quantized(infer_model_name,
+    #                                                         fuse_layers=True)
     if verbose:
         logger.info(f"Model dtype: {next(infer_model.parameters()).dtype}")
 
@@ -354,35 +357,35 @@ def main():
                 documents_per_query, similarities_per_query, cos_sim = get_top_k_docs_per_query(embedded_documents, batch, k)
                 accumulate_ranks_at_n(ranks, documents_per_query, eval_documents if args.eval_docs_path else train_documents, batch_data, k, index)
                 accumulate_ndcg_scores(ndcg_scores, ndcg_k_values, batch_data, curr_bs, cos_sim)
-                # Pr = compute_Pr(similarities_per_query, gamma)
-                # del similarities_per_query
-                # # 3.
-                # prompts = get_prompts(prompt_template, eval_documents if args.eval_docs_path else train_documents, batch_data, documents_per_query)
-                # # 4.
-                # inner_data_loader = prepare_inner_data_loader(prompts, curr_bs, inner_tokenize_function, inner_data_collator)
-                # # 5., 6. and 7.
-                # perplexities = []
-                # for inner_index, inner_batch in enumerate(inner_data_loader):
-                #     inner_batch = {k: v.to("cuda") for k, v in inner_batch.items()}
-                #     labels = inner_batch.pop("labels")
-                #     with torch.no_grad():
-                #         outputs = infer_model(**inner_batch)
-                #     perplexity = get_perplexity_per_sample(outputs, labels, cross_entropy, index, inner_index, inner_batch["input_ids"])
-                #     perplexities.append(perplexity)
-                #     del outputs, perplexity
-                #     torch.cuda.empty_cache()
-                # # 8.
-                # Q = compute_Q(perplexities, beta)
-                # # 9.
-                # loss = compute_loss(Q, Pr, kl_div)
-                # assert not torch.isnan(loss), "Loss is NaN"
-                # assert loss < 1e6, f"Loss is too large: {loss}"
-                # del perplexities, Q, Pr, inner_data_loader, inner_batch
+                Pr = compute_Pr(similarities_per_query, gamma)
+                del similarities_per_query
+                # 3.
+                prompts = get_prompts(prompt_template, eval_documents if args.eval_docs_path else train_documents, batch_data, documents_per_query)
+                # 4.
+                inner_data_loader = prepare_inner_data_loader(prompts, curr_bs, inner_tokenize_function, inner_data_collator)
+                # 5., 6. and 7.
+                perplexities = []
+                for inner_index, inner_batch in enumerate(inner_data_loader):
+                    inner_batch = {k: v.to("cuda") for k, v in inner_batch.items()}
+                    labels = inner_batch.pop("labels")
+                    with torch.no_grad():
+                        outputs = infer_model(**inner_batch)
+                    perplexity = get_perplexity_per_sample(outputs, labels, cross_entropy, index, inner_index, inner_batch["input_ids"])
+                    perplexities.append(perplexity)
+                    del outputs, perplexity
+                    torch.cuda.empty_cache()
+                # 8.
+                Q = compute_Q(perplexities, beta)
+                # 9.
+                loss = compute_loss(Q, Pr, kl_div)
+                assert not torch.isnan(loss), "Loss is NaN"
+                assert loss < 1e6, f"Loss is too large: {loss}"
+                del perplexities, Q, Pr, inner_data_loader, inner_batch
                 torch.cuda.empty_cache()
-                # if log_wandb:
-                #     wandb.log({"Evaluation Loss": loss.item()})
-                # if verbose:
-                #     logger.info(f"EVALUATION LOSS: {loss}")
+                if log_wandb:
+                    wandb.log({"Evaluation Loss": loss.item()})
+                if verbose:
+                    logger.info(f"EVALUATION LOSS: {loss}")
             ranks = [r / len(eval_data_loader.dataset) * 100 for r in ranks]
             for n in range(k):
                 if verbose:
@@ -405,8 +408,6 @@ def main():
             compute_embeddings(retr_model, tokenized_train_documents)
         )
     evaluate(embedded_eval_documents)
-    print("Fine")
-    exit()
 
     retr_model.train()
     for epoch in range(num_epochs):
