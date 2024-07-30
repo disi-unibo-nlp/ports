@@ -19,6 +19,14 @@ PROMPT_TEMPLATES = {
             f'<|assistant|>\n{RESPONSE}<|end|>'
         ),
         'answer_template' : '<|assistant|>\n'
+    },
+    'mixtral' : {
+        'prompt_template' : (
+            f'<|im_start|>system\n{INSTRUCTION} {RETRIEVED_TEXT}<|im_end|>\n'
+            f'<|im_start|>user\nQuery: {QUERY} Response:<|im_end|>\n'
+            f'<|im_start|>assistant\n{RESPONSE}<|im_end|>'
+        ),
+        'answer_template' : '<|im_start|>assistant\n'
     }
 }
 
