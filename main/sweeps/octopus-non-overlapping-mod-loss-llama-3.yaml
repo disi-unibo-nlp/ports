@@ -1,0 +1,39 @@
+program: /proj/main/main.py
+project: fine-tuning-retriever
+name: octopus-non-overlapping-mod-loss-llama-3
+method: grid
+
+metric:
+  goal: maximize
+  name: RankAvg
+  target: 100.0
+
+parameters:
+  num_train_epochs:
+    values: [5, 10, 15]
+  num_retrieved_docs_per_query:
+    values: [3, 6, 9]
+  gamma_value:
+    values: [0.3, 0.5, 1]
+  beta_value:
+    values: [0.3, 0.5, 1]
+
+command:
+  - python3
+  - ${program}
+  - --dataset_path=/proj/mounted/datasets/octopus-non-overlapping
+  - --docs_path=/proj/mounted/func-docs/documentation-octopus.txt
+  - --retr_model_name_or_path=FacebookAI/roberta-base
+  - --infer_model_name_or_path=/proj/mounted/models/models--meta-llama--Meta-Llama-3-8B-Instruct/snapshots/c4a54320a52ed5f88b7a2f84496903ea4ff07b45
+  - --infer_model_type=llama3
+  - --query_column=query
+  - --response_column=response
+  - --batch_size=8
+  - ${args}
+  - --learning_rate=1e-5
+  - --lr_scheduler=cosine
+  - --quantize
+  - --dataset_type=function_calling
+  - --modified_loss
+  - --log_to_wandb
+  - --wandb_proj_name=octopus-non-overlapping-mod-loss-llama

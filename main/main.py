@@ -65,7 +65,7 @@ def main():
         quantization_config = BitsAndBytesConfig(
             load_in_8bit=False if args.quantization_4bit else True,
             load_in_4bit=True if args.quantization_4bit else False,
-            # bnb_4bit_use_double_quant=True,
+            bnb_4bit_use_double_quant=True,
             bnb_4bit_quant_type="nf4",
             bnb_4bit_compute_dtype=torch.bfloat16
         )
@@ -134,6 +134,9 @@ def main():
     infer_model_type = args.infer_model_type
     prompt_template = PROMPT_TEMPLATES[infer_model_type]["prompt_template"]
     ANSWER = PROMPT_TEMPLATES[infer_model_type]["answer_template"]
+    # if args.infer_model_type == "codestral":
+    #     ANSWER = infer_tokenizer.encode('prova' + ANSWER + 'prova', add_special_tokens=False)[2:12]
+    
     dataset = load_from_disk(args.dataset_path)
     dataset = dataset.shuffle(seed=42).flatten_indices()
     query_column = args.query_column
@@ -392,7 +395,7 @@ def main():
                     logger.info(f"RANK@{n+1}: {ranks[n]}")
                 if log_wandb:
                     wandb.log({f"Rank@{n+1}": ranks[n] for n in range(k)})
-                    wandb.log({"RankAvg": sum(ranks) / k})    
+                    wandb.log({"RankAvg": sum(ranks[:3]) / 3})    
 
             for i, k_val in enumerate(ndcg_k_values):
                 ndcg_score_avg = sum(ndcg_scores[i]) / len(eval_data_loader.dataset)

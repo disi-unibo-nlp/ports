@@ -20,13 +20,13 @@ PROMPT_TEMPLATES = {
         ),
         'answer_template' : '<|assistant|>\n'
     },
-    'mixtral' : {
+    'codestral' : {
         'prompt_template' : (
-            f'<|im_start|>system\n{INSTRUCTION} {RETRIEVED_TEXT}<|im_end|>\n'
-            f'<|im_start|>user\nQuery: {QUERY} Response:<|im_end|>\n'
-            f'<|im_start|>assistant\n{RESPONSE}<|im_end|>'
+            f'<s>[INST] {INSTRUCTION} {RETRIEVED_TEXT}\n\n'
+            f'Query: {QUERY} Response:[/INST] '
+            f'{RESPONSE}</s>'
         ),
-        'answer_template' : '<|im_start|>assistant\n'
+        'answer_template' : '[/INST]'
     }
 }
 

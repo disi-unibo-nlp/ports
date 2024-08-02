@@ -1,6 +1,5 @@
 # build docker images
 docker build -f Dockerfile.rag-func-call -t rag-func-call .
-docker build -f Dockerfile.proj -t proj .
 
 # remove proj image
 docker rmi proj
@@ -9,3 +8,8 @@ docker rmi proj
 byobu
 byobu list-sessions
 byobu attach-session -t 1
+
+# sweeps
+wandb sweep sweeps_file.yaml
+wandb agent sweep_id
+wandb sweep --stop entity/project/sweep_ID

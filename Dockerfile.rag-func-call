@@ -64,6 +64,9 @@ RUN pip3 install einops
 RUN pip3 install pytest
 RUN pip install flash-attn --no-build-isolation
 
+# required for codestral
+RUN pip install sentencepiece
+
 # Back to default frontend
 ENV DEBIAN_FRONTEND=dialog
 
