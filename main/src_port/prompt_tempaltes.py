@@ -1,54 +1,3 @@
-INSTRUCTION = '{}'
-QUERY = '{}'
-RESPONSE = '{}'
-RETRIEVED_TEXT = '{}'
-
-PROMPT_TEMPLATES = {
-    'llama3' : {
-        'prompt_template' : (
-            f'<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{INSTRUCTION} {RETRIEVED_TEXT}'
-            f'<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nQuery: {QUERY} Response:<|eot_id|>'
-            f'<|start_header_id|>assistant<|end_header_id|>\n\n{RESPONSE}<|eot_id|>'
-        ),
-        'answer_template' : '<|start_header_id|>assistant<|end_header_id|>\n\n'
-    },
-    'phi3' : {
-        'prompt_template' : (
-            f'<|system|>\n{INSTRUCTION} {RETRIEVED_TEXT}<|end|>\n'
-            f'<|user|>\nQuery: {QUERY} Response:<|end|>\n'
-            f'<|assistant|>\n{RESPONSE}<|end|>'
-        ),
-        'answer_template' : '<|assistant|>\n'
-    },
-    'mixtral' : {
-        'prompt_template' : (
-            f'<|im_start|>system\n{INSTRUCTION} {RETRIEVED_TEXT}<|im_end|>\n'
-            f'<|im_start|>user\nQuery: {QUERY} Response:<|im_end|>\n'
-            f'<|im_start|>assistant\n{RESPONSE}<|im_end|>'
-        ),
-        'answer_template' : '<|im_start|>assistant\n'
-    },
-    'gemma' : {
-      'prompt_template' : (
-          f'<bos><start_of_turn>user\n{INSTRUCTION}\n{RETRIEVED_TEXT}\n\n{QUERY}<end_of_turn>\n'
-          f'<start_of_turn>model\n{RESPONSE}<end_of_turn>\n'
-      ),
-      'answer_template' : '<start_of_turn>model\n'
-    },
-    'gpt2' : {
-        'prompt_template' : (
-            f'### Instruction:\n{INSTRUCTION} {RETRIEVED_TEXT}\n'
-            f'### Query:\n{QUERY}\n'
-            f'### Answer:\n{RESPONSE}'
-        ),
-        'answer_template' : '### Answer:\n'
-    },
-    'codestral' : {
-        "TODO"
-    }
-}
-
-
 INSTRUCTION = """You are a function caller. Given a user query and the definition of a single API function, generate the appropriate function call. Return only the function call, using single quotes for strings and separating parameters with commas.
 
 Example:
@@ -56,5 +5,59 @@ Function: add_reminder(text: str, date: str, time: str)
 User: "Add a reminder to buy groceries tomorrow at 2 PM"
 Response: add_reminder('Buy groceries', 'tomorrow', '2 PM')
 
-
+Here's the API definition:
 """
+
+TOOL_LLAMA_GROQ_PROMPT = """
+You are a function calling AI model. You are provided with a function signature within <tools></tools> XML tags. Your task is to call the given function to assist with the user query. Don't make assumptions about what values to plug into functions. Only return the function call with a standard format FUNCTION_NAME(ARGS).
+
+Here are the available tool:
+"""
+
+pseudo_name_mapping = {
+    "llama3-8B" : "meta-llama/Meta-Llama-3-8B-Instruct",
+    'codestral-22B' : "mistralai/Codestral-22B-v0.1",
+    'gemma2-2B' : "google/gemma-2-2b-it",
+    'groqLlama3Tool-8B' : "Groq/Llama-3-Groq-8B-Tool-Use"
+}
+
+pseudo_name_instr_mapping = {
+    "llama3-8B" : INSTRUCTION,
+    'codestral-22B' : INSTRUCTION,
+    'gemma2-2B' : INSTRUCTION,
+    'groqLlama3Tool-8B' : TOOL_LLAMA_GROQ_PROMPT
+}
+
+
+PROMPT_TEMPLATES = {
+    'llama3-8B' : {
+        'prompt_template' : (
+            '<|begin_of_text|><|start_header_id|>system<|end_header_id|>{instruction}\n{api_def}'
+            '<|eot_id|><|start_header_id|>user<|end_header_id|>{query}:<|eot_id|>'
+            '<|start_header_id|>assistant<|end_header_id|>{answer}<|eot_id|>'
+        ),
+        'answer_template' : '<|start_header_id|>assistant<|end_header_id|>'
+    },
+    'codestral-22B' : {
+        'prompt_template' : (
+            '<s>[INST] {instruction}\n{api_def}\n\nQuery: {query}'
+            '[/INST] {answer}</s>'
+        ),
+        'answer_template' : '[/INST]'
+    },
+    'gemma2-2B' : {
+      'prompt_template' : (
+          '<bos><start_of_turn>user\n{instruction}\n{api_def}\n\n{query}<end_of_turn>\n'
+          '<start_of_turn>model\n{answer}<end_of_turn>\n'
+      ),
+      'answer_template' : '<start_of_turn>model\n'
+    },
+    'groqLlama3Tool-8B' : {
+         'prompt_template' : (
+            '<|start_header_id|>system<|end_header_id|>{instruction}\n<tools>{api_def}</tools>'
+            '<|eot_id|><|start_header_id|>user<|end_header_id|>{query}'
+            '<|eot_id|><|start_header_id|>assistant<|end_header_id|>{answer}<|eot_id|>'
+        ),
+        'answer_template' : '<|start_header_id|>assistant<|end_header_id|>'
+    }
+}

@@ -144,16 +144,19 @@ class TripletCollator(DataCollatorMixin):
                  retrieval_tokenizer,
                  inference_tokenizer,
                  def_corpus=None,
+                 prompt_template : str = "",
                  max_length_retrieval=128,
                  max_length_generator=1024):
         self.retr_tokenizer = retrieval_tokenizer
         self.gen_tokenizer = inference_tokenizer
         self.corpus = def_corpus
+        self.prompt_template = prompt_template
         
         self.max_length_retr = max_length_retrieval
         self.max_length_gen = max_length_generator
 
     def __call__(self, batch):
+        prompt_template = self.prompt_template
         queries = [item['query'] for item in batch]
         positives = [item['positive'] for item in batch]
         negatives = [item['negative'] for item in batch]
@@ -288,10 +291,11 @@ class EvalTripletCollator(DataCollatorMixin):
 
 def get_train_dataloader(dataset,
                          api_corpus_list : List[str],
-                         retrieval_max_length : int = 514,
-                         generateor_max_length : int = 1024,
                          retrieval_tokenizer : AutoTokenizerm,
                          inference_tokenizer : AutoTokenizerm,
+                         prompt_template : str = "",
+                         retrieval_max_length : int = 514,
+                         generateor_max_length : int = 1024,
                          batch_size : int = 2,
                          epoch_number : int = 0,
                          num_neg_examples : int = 2) -> torch.utils.data.DataLoader:
@@ -307,6 +311,7 @@ def get_train_dataloader(dataset,
 
     train_collator = TripletCollator(retrieval_tokenizer=retrieval_tokenizer,
                                     inference_tokenizer=inference_tokenizer,
+                                    prompt_template=prompt_template,
                                     def_corpus=api_corpus_list,
                                     max_length_retrieval=retrieval_max_length,
                                     max_length_generator=generateor_max_length)

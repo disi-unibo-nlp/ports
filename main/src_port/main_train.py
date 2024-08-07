@@ -28,6 +28,8 @@ PROJECT_NAME = "TEST_Port"
 RUN_NAME = "PORT_pos_neg_labels"
 
 
+from src_port.prompt_template import pseudo_name_mapping, pseudo_name_instr_mapping, PROMPT_TEMPLATES
+
 import compute_similarity, compute_Pr, get_perplexity, get_batch_logps, compute_loss_replug, odds_ratio_loss, embed_corpus
 
 
@@ -362,6 +364,7 @@ def train(dataset : Dataset,
           train_api_corpus : List[str],
           eval_api_corpus : List[str],
           data_collator_completion : DataCollatorMixin,
+          prompt_template : str = "",
           lambda_loss : float = 0.2,
           num_epochs : int = 10,
           retriever_max_seq_length : int = 514,
@@ -391,6 +394,7 @@ def train(dataset : Dataset,
             "inference_tokenizer" : infer_tokenizer,
             "epoch_number" : epoch,
             "batch_size" : train_batch_size,
+            "prompt_template" : prompt_template,
             "num_neg_examples" : number_of_neg_examples
         }
         triplet_dataloader = get_train_dataloader(**train_data_config)
@@ -624,8 +628,8 @@ def main():
     parser.add_argument('--dataset', type=str, default="bfcl", choices=["bfcl", "apibank", "apibench", "octopus", "toole", "toolbench"], help='Dataset name for training and avaluation')
 
     # Models
-    parser.add_argument('--inference_model_name', type=str, default=None, help="")
-    parser.add_argument('--retrieval_model_name', type=str, default=None, help="")
+    parser.add_argument('--inference_model_name', type=str, default="llama3-8B", choices=["llama3-8B", "codestral-22B", "gemma2-2B", "groqLlama3Tool-8B"], help="Pseudo-Name of the generative model to use for function calling")
+    parser.add_argument('--retrieval_model_name', type=str, default="FacebookAI/roberta-base", help="Name of the encoder model to use for retrieval")
     parser.add_argument('--retriever_max_seq_length', type=int, default=514, help="Max sequence length for retriever")
     parser.add_argument('--inference_max_seq_length', type=int, default=1024, help="Max sequence length for the inference model")
 
@@ -671,6 +675,9 @@ def main():
     retr_tokenizer = AutoTokenizer.from_pretrained(retr_model_name)
 
     logger.info("Loading Generative Model")
+    pseudo_model_name = args.inference_model_name
+    infer_model_name = pseudo_name_mapping[pseudo_model_name]
+
     infer_model = AutoModelForCausalLM.from_pretrained(infer_model_name, 
                                                       load_in_4bit=args.load_in_4bit, 
                                                       device_map=0 if device=="cuda" else "cpu")
@@ -723,9 +730,12 @@ def main():
 
 
     # TODO: answer_template = get_answer_template(gen_model_name)
+    prompt_template = PROMPT_TEMPLATES[pseudo_model_name]
+    instruction = pseudo_name_instr_mapping[pseudo_model_name]
+    answer_template = prompt_template["answer_template"]
 
     response_template_ids = infer_tokenizer.encode(answer_template,
-                                                    add_special_tokens=False)[2:]
+                                                    add_special_tokens=False)#[2:]
 
     data_collator_completion = DataCollatorForCompletionOnlyLM(tokenizer=infer_tokenizer,
                                                                 response_template=response_template_ids,
@@ -742,6 +752,7 @@ def main():
         "infer_model" : infer_model,
         "train_api_corpus" : train_api_corpus,
         "eval_api_corpus" : eval_api_corpus,
+        "prompt_template" : prompt_template["prompt_template"],
         "data_collator_completion" : data_collator_completion,
         "lambda_loss" : args.lambda_loss,
         "num_epochs" : args.n_epochs,
