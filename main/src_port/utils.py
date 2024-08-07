@@ -78,7 +78,12 @@ def encode_query(retr_model,
     return F.normalize(retr_model(**query)[0][:, 0], p=2, dim=1).unsqueeze(0)
 
 
-def embed_corpus(retr_model, corpus, device, batch_size=32, max_length=1024):
+def embed_corpus(retr_model, 
+                 retr_tokenizer,
+                 corpus, 
+                 device, 
+                 batch_size=32, 
+                 max_length=1024):
     """
     Create embedding matrix for a corpus of documents.
     """

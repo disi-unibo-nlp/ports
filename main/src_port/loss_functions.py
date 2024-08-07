@@ -1,11 +1,21 @@
 import torch
-
+import torch.nn.functional as F
+from torch.nn import CrossEntropyLoss, KLDivLoss
 
 
 
 # ---------------------------------------
 # >> REPLUG
 
+def compute_loss(Q, Pr, kl_div):
+    """
+    Computes KL(Pr||Q)
+    (Q and P are inverted in the function parameters, because it's how pytorch wants them)
+    """
+    Q_log = torch.log(Q)
+    divergence = kl_div(Q_log, Pr).sum(-1)
+    loss = divergence.mean()
+    return loss
 
 def compute_perplexity(output, labels, pad_token_id):
     logits = output["logits"]  # [bs, seq_len, vocab_size]
@@ -29,7 +39,46 @@ def compute_perplexity(output, labels, pad_token_id):
 
     return -mean_log_prob
 
+# def get_perplexity(outputs,
+#                    input_ids,
+#                    attention_mask):
+#     # Get the loss for each element in the batch
+#     loss = outputs.loss_per_sample if hasattr(outputs, 'loss_per_sample') else outputs.loss.unsqueeze(0)
 
+#     # Count the number of non-padding tokens for each sample
+#     non_pad_tokens = attention_mask.sum(dim=1)
+
+#     # Compute perplexity for each sample
+#     #ppl = torch.exp(loss * input_ids.size(1) / non_pad_tokens)
+#     ppl = loss * input_ids.size(1) / non_pad_tokens
+
+#     return ppl
+
+from torch.nn import CrossEntropyLoss
+cross_entropy = CrossEntropyLoss(reduction='none')
+
+def get_perplexity(outputs, 
+                   input_ids,
+                   attention_mask,
+                   padding_token_ids : int = -100):
+    """
+    From the inference model's outputs and the labels, compute the perplexity of each example
+    """
+    labels=input_ids
+    logits = outputs["logits"]
+    shift_labels = labels[..., 1:].contiguous()
+    shift_logits = logits[..., :-1, :].contiguous()
+    
+    elem_wise_loss = cross_entropy(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+    loss_sum_per_sample = elem_wise_loss.view(shift_logits.size(0), shift_logits.size(1)).sum(dim=1)
+    num_elems_per_sample = torch.sum(shift_labels.ne(padding_token_ids), dim=1)
+    loss_per_sample = loss_sum_per_sample / num_elems_per_sample
+
+    #loss_per_sample = torch.exp(loss_per_sample)
+    return loss_per_sample
+
+def compute_Pr(similarities, gamma, axis):
+    return F.softmax(similarities / gamma, dim=axis)
 
 
 # ----------------------------------------
@@ -88,15 +137,15 @@ def get_batch_logps(
 
 
 def odds_ratio_loss(positive_retr_log_prob, 
-                    positive_retr_log_prob, 
+                    negative_retr_log_prob, 
                     beta : float = 0.1):
     """
     Return the odd ration between input posiitve and negatative probabilities
     """
                 
     # log ration reformulated as difference to enhance statbility
-    log_odds = (positive_retr_log_prob - positive_retr_log_prob) - (
-        torch.log1p(-torch.exp(positive_retr_log_prob)) - torch.log1p(-torch.exp(positive_retr_log_prob))
+    log_odds = (positive_retr_log_prob - negative_retr_log_prob) - (
+        torch.log1p(-torch.exp(positive_retr_log_prob)) - torch.log1p(-torch.exp(negative_retr_log_prob))
     )
 
     sig_ratio = F.sigmoid(log_odds)
@@ -104,6 +153,6 @@ def odds_ratio_loss(positive_retr_log_prob,
     losses = beta * ratio
 
     positive_rewards = beta * positive_retr_log_prob.detach()
-    negative_rewards = beta * positive_retr_log_prob.detach()
+    negative_rewards = beta * negative_retr_log_prob.detach()
 
     return losses, positive_rewards, negative_rewards, torch.mean(ratio).item(), torch.mean(log_odds).item()

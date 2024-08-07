@@ -1,13 +1,17 @@
 from datasets import load_dataset, Dataset
 from transformers import AutoTokenizer
 from typing import List
+import torch
+import random
+
+from transformers.data.data_collator import DataCollatorMixin
+from torch.utils.data import DataLoader, Dataset
 
 
 class DatasetDownloader():
 
     def __init__(self,
-                 dataset_name):
-        super(self).__init__()
+                 dataset_name : str = "octopus"):
 
         self.dataset_name = dataset_name
         self.data_sub_split = "parsed_data"
@@ -62,7 +66,7 @@ def get_prompted_q_doc(prompt_template : str,
 
     prompt_fields = {
         "instruction" : instruction_prompt,
-        "retrieved_doc" : document,
+        "api_def" : document,
         "query" : query,
         "answer" : answer
     }
@@ -83,7 +87,7 @@ def create_triplets_with_unique_multiple_negatives(dataset : Dataset,
     triplets = []
     questions = dataset[split]["query"]
     augmented_descriptions = dataset[split]["api_description"]
-    answer = dataset[split]["answer"]
+    answers = dataset[split]["answer"]
 
 
     for i in range(len(questions)):
@@ -145,9 +149,9 @@ class TripletCollator(DataCollatorMixin):
                  inference_tokenizer,
                  def_corpus=None,
                  prompt_template : str = "",
-                 instruction_prompt = str = "",
-                 max_length_retrieval=128,
-                 max_length_generator=1024):
+                 instruction_prompt : str = "",
+                 max_length_retrieval : int = 128,
+                 max_length_generator : int = 1024):
         self.retr_tokenizer = retrieval_tokenizer
         self.gen_tokenizer = inference_tokenizer
         self.corpus = def_corpus
@@ -260,31 +264,22 @@ class EvalTripletCollator(DataCollatorMixin):
         query_encodings = self.retr_tokenizer(queries, truncation=True, max_length=self.max_length_retr, padding='max_length', return_tensors='pt')
         positive_encodings = self.retr_tokenizer(positives, truncation=True, max_length=self.max_length_retr, padding='max_length', return_tensors='pt')
 
-        # Labels
-        labels_encodings_pos = self.gen_tokenizer(pos_answers,
-                                                  truncation=True,
-                                                  max_length=self.max_length_gen,
-                                                  padding='max_length',
-                                                  return_tensors='pt')
-
         # Remove token_type_ids
         for encoding in [query_encodings,
-                         positive_encodings,
-                         labels_encodings_pos]:
-          encoding.pop('token_type_ids', None)
+                         positive_encodings]:
+            encoding.pop('token_type_ids', None)
 
         # Get gold retrieval_ids wrt corpus
         gold_indices = []
         for pos_doc in positives:
-          pos_idx = self.corpus.index(pos_doc)
-          gold_indices.append(pos_idx)
+            pos_idx = self.corpus.index(pos_doc)
+            gold_indices.append(pos_idx)
         gold_indices = torch.tensor(gold_indices)
 
 
         return {
             'query': query_encodings,
             'positive': positive_encodings,
-            'labels_pos' : labels_encodings_pos,
             'gold_retrieval_ids' : gold_indices
         }
 
@@ -292,8 +287,8 @@ class EvalTripletCollator(DataCollatorMixin):
 
 def get_train_dataloader(dataset,
                          api_corpus_list : List[str],
-                         retrieval_tokenizer : AutoTokenizerm,
-                         inference_tokenizer : AutoTokenizerm,
+                         retrieval_tokenizer : AutoTokenizer,
+                         inference_tokenizer : AutoTokenizer,
                          prompt_template : str = "",
                          retrieval_max_length : int = 514,
                          generateor_max_length : int = 1024,
@@ -327,16 +322,16 @@ def get_train_dataloader(dataset,
 
 def get_eval_dataloader(dataset,
                         api_corpus_list : List[str],
+                        retrieval_tokenizer : AutoTokenizer,
                         retrieval_max_length : int = 514,
-                        retrieval_tokenizer : AutoTokenizerm,
                         batch_size : int = 2) -> torch.utils.data.DataLoader:
 
-    eval_data = create_instances_wo_negs(datset, split="test")
+    eval_data = create_instances_wo_negs(dataset, split="test")
     eval_triplet_dataset = TripletDataset(eval_data)
     
-    eval_collator = EvalTripletCollator(retrieval_tokenizer=retr_tokenizer,
+    eval_collator = EvalTripletCollator(retrieval_tokenizer=retrieval_tokenizer,
                                         def_corpus=api_corpus_list,
-                                        max_length=retrieval_max_length)
+                                        max_length_retrieval=retrieval_max_length)
 
     eval_dataloader = DataLoader(eval_triplet_dataset,
                                 batch_size=batch_size,
