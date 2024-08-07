@@ -145,12 +145,14 @@ class TripletCollator(DataCollatorMixin):
                  inference_tokenizer,
                  def_corpus=None,
                  prompt_template : str = "",
+                 instruction_prompt = str = "",
                  max_length_retrieval=128,
                  max_length_generator=1024):
         self.retr_tokenizer = retrieval_tokenizer
         self.gen_tokenizer = inference_tokenizer
         self.corpus = def_corpus
         self.prompt_template = prompt_template
+        self.instruction_prompt = instruction_prompt
         
         self.max_length_retr = max_length_retrieval
         self.max_length_gen = max_length_generator
@@ -170,14 +172,13 @@ class TripletCollator(DataCollatorMixin):
         negative_encodings = [self.retr_tokenizer(neg, truncation=True, max_length=self.max_length_retr, padding='max_length', return_tensors='pt') for neg in negatives]
 
         # Prompts for inference
-        prompted_q_pos = [get_prompted_q_doc(prompt_template=prompt_template, document=item['positive'], query=item['query'], answer=item['pos_answer']) for item in batch]
+        prompted_q_pos = [get_prompted_q_doc(prompt_template=prompt_template, document=item['positive'], query=item['query'], answer=item['pos_answer'], instruction_prompt=self.instruction_prompt) for item in batch]
         prompted_q_pos_encodings = self.gen_tokenizer(prompted_q_pos,
                                                   truncation=True,
                                                   max_length=self.max_length_gen,
                                                   padding='max_length',
                                                   return_tensors='pt')
 
-        #prompted_q_neg = [[get_prompted_q_doc(prompt_template=prompt_template, document=item['negative'], query=item['query'], answer=item['neg_answer']) for item in sub_batch] for sub_batch in batch]
         prompted_q_neg = []
         for item in batch:
           sub_prompted_neg = []
@@ -185,7 +186,7 @@ class TripletCollator(DataCollatorMixin):
           #print(len(negatives[0]))
           for neg_i in range(len(negatives[0])):
             #print(item['negative'][neg_i])
-            _p_neg = get_prompted_q_doc(prompt_template=prompt_template, document=item['negative'][neg_i], query=item['query'], answer=item['neg_answer'][neg_i])
+            _p_neg = get_prompted_q_doc(prompt_template=prompt_template, document=item['negative'][neg_i], query=item['query'], answer=item['neg_answer'][neg_i], instruction_prompt=self.instruction_prompt)
             sub_prompted_neg.append(_p_neg)
           prompted_q_neg.append(sub_prompted_neg)
 
