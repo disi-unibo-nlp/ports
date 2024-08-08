@@ -74,11 +74,10 @@ def get_perplexity(outputs,
     num_elems_per_sample = torch.sum(shift_labels.ne(padding_token_ids), dim=1)
     loss_per_sample = loss_sum_per_sample / num_elems_per_sample
 
-    #loss_per_sample = torch.exp(loss_per_sample)
-    return loss_per_sample
+    return -loss_per_sample
 
-def compute_Pr(similarities, gamma, axis):
-    return F.softmax(similarities / gamma, dim=axis)
+def compute_Pr(similarities, axis):
+    return F.softmax(similarities, dim=axis)
 
 
 # ----------------------------------------

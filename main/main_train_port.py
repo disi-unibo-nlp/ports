@@ -112,9 +112,16 @@ def evaluate(retr_model,
 
     ranks = [0 for _ in range(k)]
 
+    # with torch.no_grad():
+    #     for batch in tqdm(eval_dataloader, total=len(eval_dataloader), desc="TESTING EMBEDDING"):
+    #         queries = batch["query"]
+    #         # Compute query embeddings
+    #         query_embeddings = encode_query(retr_model, queries, device)
+
     with torch.no_grad():
         for batch in tqdm(eval_dataloader, total=len(eval_dataloader)):
             gold_ids = batch["gold_retrieval_ids"].to(device)
+            #print(f"MAX IDS: {torch.max(gold_ids,-1).values.max(-1).values.item()} | Corpus shape: {corpus_embeddings.shape}")
             queries = batch["query"]
 
 
@@ -142,296 +149,65 @@ def evaluate(retr_model,
 
     return ranks
 
-# def old_train(dataset : Dataset,
-#           retr_tokenizer : AutoTokenizer, 
-#           retr_model : AutoModel,
-#           infer_tokenizer : AutoTokenizer,
-#           infer_model : AutoModelForCausalLM,
-#           train_api_corpus : List[str],
-#           eval_api_corpus : List[str],
-#           lambda_loss : float = 0.2,
-#           train_batch_size : int = 2,
-#           eval_batch_size : int = 2,
-#           num_epochs : int = 10,
-#           retriever_max_seq_length : int = 514,
-#           inference_max_seq_length : int = 1024,
-#           number_of_neg_examples : int = 3,
-#           log_freq :  int = 100,
-#           k_eval : int = 10,
-#           device : str = "cuda"):
-    
-#     # Initialize wandb
-#     wandb.init(project=PROJECT_NAME, 
-#                name=RUN_NAME)
 
 
-#     retr_model.train()
-#     for epoch in range(num_epochs):
+def run_evaluation(retr_model : AutoModel,
+                   retr_tokenizer : AutoTokenizer,
+                   dataset : Dataset,
+                   eval_api_corpus : List[str],
+                   retriever_max_seq_length : int,
+                   eval_batch_size : int,
+                   preprocessing_batch_size : int,
+                   device : str,
+                   k_eval : int):
+    retr_model.eval()
 
-#         logger.info("Creating pseudo-random dataloader")
-#         train_data_config = {
-#             "dataset" : dataset,
-#             "api_corpus_list" : train_api_corpus,
-#             "retrieval_max_length" : retriever_max_seq_length,
-#             "generateor_max_length" : inference_max_seq_length,
-#             "retrieval_tokenizer" : retr_tokenizer,
-#             "inference_tokenizer" : infer_tokenizer,
-#             "epoch_number" : epoch,
-#             "batch_size" : train_batch_size,
-#             "num_neg_examples" : number_of_neg_examples
-#         }
-#         triplet_dataloader = get_train_dataloader(**train_data_config)
+    logger.info("Get Eval DataLoader")
+    eval_data_config = {
+        "dataset" : dataset, 
+        "api_corpus_list" : eval_api_corpus,
+        "retrieval_max_length" : retriever_max_seq_length,
+        "retrieval_tokenizer" : retr_tokenizer,
+        "batch_size" : eval_batch_size
+    }
+    eval_triplet_dataloader = get_eval_dataloader(**eval_data_config)
 
-#         logger.info(f"Starting training epoch {epoch+1}/{num_epochs}")
+    logger.info("Embedding Tool Corpus")
+    eval_corpus_embeddings = embed_corpus(retr_model,
+                                        retr_tokenizer,
+                                        eval_api_corpus,
+                                        device,
+                                        batch_size=preprocessing_batch_size,
+                                        max_length=retriever_max_seq_length)
+    eval_corpus_embeddings = eval_corpus_embeddings.to(device)
 
-#         pbar = tqdm(enumerate(triplet_dataloader), total=len(triplet_dataloader), desc="Training PORT with RePlug+ORPO")
-#         for bid, batch in pbar:
+    logger.info("Compuring rank accuracy")
+    ranks = evaluate(retr_model,
+                    eval_triplet_dataloader,
+                    eval_corpus_embeddings,
+                    device,
+                    k=k_eval)
 
-#             bs = batch["query"]["input_ids"].shape[0]
-#             n_neg_docs = neg_docs[0]["input_ids"].shape[0]
+    # Print results
+    print("\n")
+    print("EVALUATION")
+    print("*"*50)
+    for n in range(k_eval):
+        print(f"RANK@{n+1}: {ranks[n]:.2f}%")
+    print("*"*50)
+    print("\n")
 
-#             pos_labels = batch["labels_pos"]    # [bs, max_seq_len]
-#             neg_labels = batch["labels_neg"]    # bs * [n_neg_docs, max_seq_len]
+    wandb.log({
+        f"RANK@{n+1}" : ranks[n] for n in range(k_eval)
+    })
 
-#             queries = batch["query"]            # [bs, max_seq_len]
-#             pos_docs = batch["positive"]        # [bs, max_seq_len]
-#             neg_docs =  batch["negative"]       # bs * [n_neg_docs, max_seq_len]
+    retr_model.train()
+    del eval_corpus_embeddings
+    torch.cuda.empty_cache()
 
-
-#             # > Compute positive-negative similarities
-#             pos_simialrity = compute_similarity(retr_model, queries, pos_docs).view(bs,-1)  # [bs,1]
-
-
-#             neg_similarity = []
-#             for nid in range(n_neg_docs):
-#                 # consider the i-th negative document from each batch
-#                 data = {
-#                     k : torch.stack([neg_docs[bid][k][nid,:] for bid in range(bs)]) for k in ['input_ids', 'attention_mask']
-#                 }
-#                 this_neg_similarity = compute_similarity(retr_model, 
-#                                                         queries, 
-#                                                         data).view(bs,-1)
-#                 neg_similarity.append(this_neg_similarity)
-            
-
-#             neg_similarity = torch.stack(neg_similarity, dim=-1)
-#             similarities = torch.cat((pos_simialrity, neg_similarity.squeeze(1)), dim=-1) # [bs, 1+n_neg_docs]
-
-
-#             # Normalize and weight similarities into retrieval probabilities
-#             Pr_retr = compute_Pr(
-#                 similarities = similarities,
-#                 gamma = gamma,
-#                 axis = -1
-#             )
-
-#             # > Get prompts
-#             input_prompt_pos = batch["q_pos_prompt"]
-#             input_prompt_neg = batch["q_neg_prompt"]
-
-#             # > Inference on the model
-#             input_prompt_pos = {k : input_prompt_pos[k].to(device) for k in input_prompt_pos}
-#             input_prompt_neg = [{k : neg_docs_trip[k].to(device) for k in neg_docs_trip} for neg_docs_trip in input_prompt_neg]
-
-#             pos_labels = {k : pos_labels[k].to(device) for k in pos_labels}
-#             neg_labels = [{k : neg_docs_trip[k].to(device) for k in neg_docs_trip} for neg_docs_trip in neg_labels]
-
-#             # > Define dataloader with response_template masking
-#             pos_inner_data_loader = DataLoader(
-#                 Dataset.from_dict(input_prompt_pos),
-#                 shuffle=False,
-#                 batch_size=bs,
-#                 collate_fn=data_collator_completion
-#             )
-
-#             neg_inner_data_loader = [DataLoader(
-#                 Dataset.from_dict({k : torch.stack([input_prompt_neg[bid][k][nid,:] for bid in range(bs)]) for k in ["input_ids", "attention_mask"]}),
-#                 shuffle=False,
-#                 batch_size=bs,
-#                 collate_fn=data_collator_completion
-#             ) for nid in range(n_neg_docs)]
-
-#             pos_perplexity = []
-#             neg_perplexity = []
-
-#             with torch.no_grad():
-
-#                 # >> RUN FORWARD
-
-#                 # > POSITIVE
-#                 # - move data to device
-#                 _,pos_data = next(enumerate(pos_inner_data_loader))
-#                 pos_data = {k:pos_data[k].to(device) for k in pos_data}
-#                 pos_data["labels"] = pos_labels["input_ids"].to(device)
-
-#                 # - forward
-#                 outputs_pos = infer_model(**pos_data)
-
-#                 # - compute perplexity
-#                 pos_ppl_config = {
-#                     #"loss" : outputs_pos.loss,
-#                     "outputs" : outputs_pos,
-#                     "input_ids" : pos_data["input_ids"],
-#                     "attention_mask" : pos_data["attention_mask"]
-#                 }
-#                 pos_perplexity = get_perplexity(**pos_ppl_config)
-
-
-#                 # >> COMPUTE LOG-PROBABILITY FOR ORPO
-#                 pos_logps = get_batch_logps(logits=outputs_pos.logits,
-#                                             labels=pos_data["labels"], # masked with response template
-#                                             average_log_prob=True,
-#                                             label_pad_token_id=infer_tokenizer.pad_token_id)
-
-#                 del outputs_pos
-#                 torch.cuda.empty_cache()
-
-#                 # > NEGATIVES
-#                 neg_data_out = []
-#                 neg_logps = []
-
-#                 for n_id in range(n_neg_docs):
-
-#                     # - compose data and move to device
-#                     _,neg_data = next(enumerate(neg_inner_data_loader[n_id]))
-#                     neg_data = {k:neg_data[k].to(device) for k in neg_data}
-#                     _neg_labels = torch.stack([neg_labels[bid]["input_ids"][n_id,:] for bid in range(bs)], dim=0)
-#                     neg_data["labels"] = _neg_labels.to(device)
-
-#                     # - forward
-#                     outputs_neg = infer_model(**neg_data)
-#                     neg_data_out.append(outputs_neg)
-
-#                     # - compute perplexity
-#                     neg_ppl_config = {
-#                         "outputs" : outputs_neg,
-#                         "input_ids" : neg_data["input_ids"],
-#                         "attention_mask" : neg_data["attention_mask"]
-#                     }
-#                     _neg_perplexity = get_perplexity(**neg_ppl_config)
-#                     neg_perplexity.append(_neg_perplexity)
-
-#                     # >> COMPUTE LOG-PROBABILITY FOR ORPO
-#                     this_neg_logps = get_batch_logps(logits=outputs_neg.logits,
-#                                                     labels=neg_data["labels"],
-#                                                     average_log_prob=True,
-#                                                     label_pad_token_id=infer_tokenizer.pad_token_id)
-#                     neg_logps.append(this_neg_logps)
-
-#                     del outputs_neg
-#                     torch.cuda.empty_cache()
-
-#             del pos_inner_data_loader, neg_inner_data_loader
-#             torch.cuda.empty_cache()
-
-
-#             # >> Compute RePLUG Loss
-#             neg_perplexity = torch.stack(neg_perplexity, dim=-1)
-#             concat_perplexities = torch.cat((pos_perplexity.unsqueeze(0).T, neg_perplexity), dim=-1)
-
-
-#             Q = F.softmax(concat_perplexities / beta, dim=-1) # [bs,1+n_docs]
-
-#             del neg_perplexity, pos_perplexity
-#             torch.cuda.empty_cache()
-
-#             replug_loss = compute_loss_replug(Q, Pr_retr, kl_div)
-
-#             # >> Compute ORPO Loss
-#             orpo_loss, pref_ratio, log_odds_chosen = 0,0,0
-#             pos_rewards, neg_rewards = [],[]
-
-#             # - for each pair (pos, neg_i)
-#             for neg_i_logps in neg_logps:
-#                 _orpo_loss, _pos_reward, _neg_reward, _pref_ratio, _log_odds_chosen = odds_ratio_loss(
-#                     positive_retr_log_prob=pos_logps,
-#                     negative_retr_log_prob=neg_i_logps,
-#                     beta=0.1
-#                 )
-#                 orpo_loss += _orpo_loss.mean()
-#                 pos_rewards.append(_pos_reward.mean())
-#                 neg_rewards.append(_neg_reward.mean())
-#                 pref_ratio += _pref_ratio
-#                 log_odds_chosen += _log_odds_chosen
-
-
-#             orpo_loss = orpo_loss.mean()
-#             del neg_logps, pos_logps
-#             torch.cuda.empty_cache()
-
-#             loss = replug_loss - lambda_loss * orpo_loss
-
-#             if math.isinf(loss):
-#                 logger.info(f"Discarded infinite loss perturbation")
-#             else:
-#                 loss.backward()
-
-#             # Compute gradient norm
-#             grad_norm = get_gradient_norm(retr_model)
-
-#             optimizer.step()
-#             lr_scheduler.step()
-#             optimizer.zero_grad()
-
-#             reward_accuracies = (torch.tensor(pos_rewards) > torch.tensor(neg_rewards)).float()
-#             pbar.set_postfix({'Loss': loss.item(), 'RePlug Loss' : replug_loss.item(), "OPRO Loss" : -orpo_loss.item(), "Reward Accuracy" : reward_accuracies.mean().cpu().item()})
-
-
-#             if bid % log_freq == 0 or bid == 0:
-                
-#                 wandb.log({
-#                     "port_loss": loss.item(),
-#                     "replug_loss": replug_loss.item(),
-#                     "odds_ratio_loss": -orpo_loss.item(),
-#                     "ratio_reward" : pref_ratio,
-#                     "reward_Accuracy" : reward_accuracies.mean().cpu(),
-#                     "positive_reward" : pos_reward.detach().mean().cpu(),
-#                     "negative_reward" : neg_reward.detach().mean().cpu(),
-#                     "positive_odds_chosen" : log_odds_chosen,
-#                     "positive_logpb" : pos_logps.detach().mean().cpu(),
-#                     "negative_logpb" : neg_logps.detach().mean().cpu(),
-#                     "gradient_norm" : grad_norm,
-#                     "learning_rate": optimizer.param_groups[0]['lr'],
-#                     "epoch" : epoch + 1
-#                 })
-
-#             del Q, Pr_retr # neg_perplexity
-#             torch.cuda.empty_cache()
-
-#         retr_model.eval()
-#         eval_corpus_embeddings = embed_corpus(retr_model,
-#                                             eval_api_corpus,
-#                                             device,
-#                                             batch_size=eval_batch_size,
-#                                             max_length=retriever_max_seq_length)
-#         eval_corpus_embeddings = eval_corpus_embeddings.to(device)
-
-#         ranks = evaluate(retr_model,
-#                         eval_triplet_dataloader,
-#                         eval_corpus_embeddings,
-#                         device,
-#                         k=k_eval)
-
-#         # Print results
-#         print("\n\n")
-#         print("EVALUATION")
-#         print("*"*50)
-#         for n in range(K_EVAL):
-#             print(f"RANK@{n+1}: {ranks[n]:.2f}%")
-#         print("*"*50)
-#         print("\n\n")
-
-#         wandb.log({
-#             f"RANK@{n+1}: {ranks[n]:.2f}%" for n in range(K_EVAL)
-#         })
-
-#         retr_model.train()
-#         del embedded_documents
-#         torch.cuda.empty_cache()
-
-#     wandb.finish()
 
 def train(dataset : Dataset,
+          dataset_name : str,
           retr_tokenizer : AutoTokenizer, 
           retr_model : AutoModel,
           infer_tokenizer : AutoTokenizer,
@@ -439,6 +215,8 @@ def train(dataset : Dataset,
           train_api_corpus : List[str],
           eval_api_corpus : List[str],
           data_collator_completion : DataCollatorMixin,
+          eval_strategy : str = "epoch",
+          eval_steps : int = None,
           prompt_template : str = "",
           instruction_prompt : str = "",
           lambda_loss : float = 0.2,
@@ -459,10 +237,45 @@ def train(dataset : Dataset,
           wandb_project_name : str = "",
           wandb_run_name : str = ""):
 
-    # Initialize wandb
-    wandb.init(project=wandb_project_name, 
-               name=wandb_run_name)
 
+
+    # Initialize wandb
+    config = {
+        "beta" : beta,
+        "gamma" : gamma,
+        "lr" : learning_rate,
+        "scheduler_type" : scheduler_type,
+        "train_batch_size" : train_batch_size,
+        "eval_batch_size" : eval_batch_size,
+        "lambda_loss_factor" : lambda_loss,
+        "retriever_max_seq_length" : retriever_max_seq_length,
+        "inference_max_seq_length" : inference_max_seq_length,
+        "epochs" : num_epochs,
+        "dataset" : dataset_name
+    }
+
+    wandb.init(project=wandb_project_name, 
+               name=wandb_run_name,
+               config=config)
+    
+    # First evaluation
+    logger.info(f"Starting Initial Evaluation")
+    eval_config = {
+        "retr_model" : retr_model,
+        "retr_tokenizer" : retr_tokenizer,
+        "dataset" : dataset,
+        "eval_api_corpus" : eval_api_corpus,
+        "retriever_max_seq_length" : retriever_max_seq_length,
+        "eval_batch_size" : eval_batch_size,
+        "preprocessing_batch_size" : preprocessing_batch_size,
+        "device" : device,
+        "k_eval" : k_eval
+    }
+    run_evaluation(**eval_config)
+    
+
+
+    # Load first dataloader
     train_data_config = {
         "dataset" : dataset,
         "api_corpus_list" : train_api_corpus,
@@ -488,7 +301,6 @@ def train(dataset : Dataset,
 
     kl_div = KLDivLoss(reduction='none')
 
-    
     for epoch in range(num_epochs):
         retr_model.train()
 
@@ -545,9 +357,10 @@ def train(dataset : Dataset,
 
 
             # Normalize and weight similarities into retrieval probabilities
+            similarities = similarities / gamma # weight probabilities with the set hyperparameter
+
             Pr_retr = compute_Pr(
                 similarities = similarities,
-                gamma = gamma,
                 axis = -1
             )
 
@@ -574,12 +387,13 @@ def train(dataset : Dataset,
                     collate_fn=data_collator_completion)))
 
                 pos_data = {k: v.to(device) for k, v in pos_data.items()}
-                pos_data["labels"] = pos_labels["input_ids"]
+                #pos_data["labels"] = pos_labels["input_ids"]
+                labels = pos_data.pop("labels")
 
                 outputs_pos = infer_model(**pos_data)
 
                 pos_perplexity = get_perplexity(outputs=outputs_pos, 
-                                                input_ids=pos_data["input_ids"], 
+                                                input_ids=labels,#pos_data["input_ids"], 
                                                 attention_mask=pos_data["attention_mask"],
                                                 padding_token_ids=retr_tokenizer.pad_token_id)
                 del outputs_pos, pos_data
@@ -596,12 +410,14 @@ def train(dataset : Dataset,
                         collate_fn=data_collator_completion)))
 
                     neg_data = {k: v.to(device) for k, v in neg_data.items()}
-                    neg_data["labels"] = torch.stack([neg_labels[bid]["input_ids"][n_id,:] for bid in range(bs)], dim=0)
-
+                    #neg_data["labels"] = torch.stack([neg_labels[bid]["input_ids"][n_id,:] for bid in range(bs)], dim=0)
+                    #neg_data["labels"] = pos_labels["input_ids"].to(device)
+                    labels = neg_data.pop("labels")
+                    
                     outputs_neg = infer_model(**neg_data)
 
                     neg_perplexity.append(get_perplexity(outputs=outputs_neg, 
-                                                         input_ids=neg_data["input_ids"],
+                                                         input_ids=labels,#neg_data["labels"],#neg_data["input_ids"],
                                                          attention_mask=neg_data["attention_mask"],
                                                          padding_token_ids=retr_tokenizer.pad_token_id))
 
@@ -611,7 +427,9 @@ def train(dataset : Dataset,
             # Compute Q
             neg_perplexity = torch.stack(neg_perplexity, dim=-1)
             concat_perplexities = torch.cat((pos_perplexity.unsqueeze(0).T, neg_perplexity), dim=-1)
-            Q = F.softmax(concat_perplexities / beta, dim=-1)
+            concat_perplexities = concat_perplexities / beta # weight perplexities with the set hyperparameter
+            
+            Q = F.softmax(concat_perplexities, dim=-1)
 
             del concat_perplexities
             torch.cuda.empty_cache()
@@ -636,7 +454,7 @@ def train(dataset : Dataset,
                 _pref_loss, _pos_reward, _neg_reward, _pref_ratio, _maean_prob_ratio = odds_ratio_loss(
                     positive_retr_log_prob=pos_retrieval_prob.log(),
                     negative_retr_log_prob=neg_retrieval_prob.log(),
-                    beta=0.1
+                    beta=beta
                 )
                 pref_loss += _pref_loss.mean()
                 pos_rewards.append(_pos_reward.mean())  # weighted log retr prob (w = beta) for the positive sample
@@ -651,17 +469,17 @@ def train(dataset : Dataset,
             # > Aggregate loss
             loss = ppl_pr_KL_loss - lambda_loss * pref_loss
 
-            # if math.isinf(loss):
-            #     logger.info(f"Discarded infinite loss perturbation")
-            # else:
             loss.backward()
+            #torch.nn.utils.clip_grad_norm_(retr_model.parameters(), max_norm=1.0) # apply gradient clipping
             optimizer.step()
             lr_scheduler.step()
+            
 
             # Compute gradient norm
             grad_norm = get_gradient_norm(retr_model)
 
             optimizer.zero_grad()
+            
 
             # how many times the probability of retrieving a positive overcome the one of retrieving a negative
             pos_rewards = torch.tensor(pos_rewards)
@@ -684,7 +502,11 @@ def train(dataset : Dataset,
                     "negative_retrieval_probability" : neg_retrieval_probs.mean().cpu(),
                     "negative_log_probability" : neg_rewards.mean().cpu(),
                     "positive_ppl" : pos_perplexity.mean().cpu(),
+                    "positive_Q_ppl" : Q[:,0].mean().cpu(),
+                    "positive_sim" : pos_simialrity.mean().cpu(),
+                    "negative_sim" : neg_similarity.mean(-1).mean().cpu(),
                     "negative_ppl" : neg_perplexity.mean(-1).mean().cpu(),
+                    "negative_Q_ppl" : Q[:,1:].mean(-1).mean().cpu(),
                     "mean_retr_prob_ration" : maean_prob_ratio,
                     "gradient_norm" : grad_norm,
                     "learning_rate": optimizer.param_groups[0]['lr'],
@@ -696,51 +518,36 @@ def train(dataset : Dataset,
             del pref_ratio, retrieval_accuracy, pos_rewards, neg_rewards, maean_prob_ratio
             torch.cuda.empty_cache()
 
-        logger.info(f"Starting evaluation epoch {epoch+1}/{num_epochs}")
-        retr_model.eval()
+            if eval_strategy == "steps" and bid % eval_steps == 0:
 
-        logger.info("Get Eval DataLoader")
-        eval_data_config = {
-            "dataset" : dataset, 
-            "api_corpus_list" : eval_api_corpus,
-            "retrieval_max_length" : retriever_max_seq_length,
-            "retrieval_tokenizer" : retr_tokenizer,
-            "batch_size" : eval_batch_size
-        }
-        eval_triplet_dataloader = get_eval_dataloader(**eval_data_config)
+                logger.info(f"Starting evaluation epoch {epoch+1}/{num_epochs} - step {bid*eval_steps}")
+                eval_config = {
+                    "retr_model" : retr_model,
+                    "retr_tokenizer" : retr_tokenizer,
+                    "dataset" : dataset,
+                    "eval_api_corpus" : eval_api_corpus,
+                    "retriever_max_seq_length" : retriever_max_seq_length,
+                    "eval_batch_size" : eval_batch_size,
+                    "preprocessing_batch_size" : preprocessing_batch_size,
+                    "device" : device,
+                    "k_eval" : k_eval
+                }
+                run_evaluation(**eval_config)
 
-        logger.info("Embedding Tool Corpus")
-        eval_corpus_embeddings = embed_corpus(retr_model,
-                                            retr_tokenizer,
-                                            eval_api_corpus,
-                                            device,
-                                            batch_size=preprocessing_batch_size,
-                                            max_length=retriever_max_seq_length)
-        eval_corpus_embeddings = eval_corpus_embeddings.to(device)
-
-        logger.info("Compuring rank accuracy")
-        ranks = evaluate(retr_model,
-                        eval_triplet_dataloader,
-                        eval_corpus_embeddings,
-                        device,
-                        k=k_eval)
-
-        # Print results
-        print("\n")
-        print("EVALUATION")
-        print("*"*50)
-        for n in range(k_eval):
-            print(f"RANK@{n+1}: {ranks[n]:.2f}%")
-        print("*"*50)
-        print("\n")
-
-        wandb.log({
-            f"RANK@{n+1}" : ranks[n] for n in range(k_eval)
-        })
-
-        retr_model.train()
-        del eval_corpus_embeddings
-        torch.cuda.empty_cache()
+        if eval_strategy == "epoch":
+            logger.info(f"Starting evaluation epoch {epoch+1}/{num_epochs}")
+            eval_config = {
+                "retr_model" : retr_model,
+                "retr_tokenizer" : retr_tokenizer,
+                "dataset" : dataset,
+                "eval_api_corpus" : eval_api_corpus,
+                "retriever_max_seq_length" : retriever_max_seq_length,
+                "eval_batch_size" : eval_batch_size,
+                "preprocessing_batch_size" : preprocessing_batch_size,
+                "device" : device,
+                "k_eval" : k_eval
+            }
+            run_evaluation(**eval_config)
 
     logger.info("Training and evaluations are over")
     wandb.finish()
@@ -759,6 +566,9 @@ def main():
     parser.add_argument('--do_train', action='store_true', default=False, help="Whether to run the training loop")
     parser.add_argument('--do_eval', action='store_true', default=False,  help="Whether to run the evaluation loop")
     parser.add_argument('--load_in_4bit', action='store_true', default=False, help="Whether to load the model in 4 bit")
+
+    parser.add_argument('--eval_strategy', type=str, default="epoch", choices=["epoch", "steps"], help="Strategy to use for evaluation")
+    parser.add_argument('--eval_steps', type=int, default=None, help="Number of steps after which the evaluation is performed if eval_strategy = 'steps'")
 
     # Training/Eval config
     parser.add_argument('--max_train_samples', type=int, default=None, help="Maximum number of training instances to retain (all if set to None)")
@@ -825,7 +635,9 @@ def main():
     if infer_tokenizer.pad_token is None:
         logger.info("No padding token - using EOS instead")
         infer_tokenizer.add_special_tokens({'pad_token': '<pad>'})
+        
         infer_tokenizer.pad_token = infer_tokenizer.eos_token
+        infer_tokenizer.pad_token_id = infer_tokenizer.eos_token_id
 
         infer_model.resize_token_embeddings(len(infer_tokenizer))
 
@@ -834,7 +646,9 @@ def main():
     if retr_tokenizer.pad_token is None:
         logger.info("No padding token - using EOS instead")
         retr_tokenizer.add_special_tokens({'pad_token': '<pad>'})
+        
         retr_tokenizer.pad_token = retr_tokenizer.eos_token
+        retr_tokenizer.pad_token_id = retr_tokenizer.eos_token_id
 
         retr_model.resize_token_embeddings(len(retr_tokenizer))
 
@@ -845,7 +659,6 @@ def main():
     logger.info("Loading dataset")
     dataset_downloader = DatasetDownloader(dataset_name=args.dataset)
     dataset = dataset_downloader.get_dataset()
-    logger.info("Parsing dataset")
     dataset = dataset_downloader.post_process_answers(dataset)
 
     # Sample from dataset if necessary
@@ -866,6 +679,8 @@ def main():
     train_api_corpus = list(set(dataset["train"]["api_description"]))
     eval_api_corpus = list(set(dataset["test"]["api_description"]))
 
+    logger.info(f"[STAST] Corpus--> Train: {len(train_api_corpus)} | Eval: {len(eval_api_corpus)}")
+
     k_eval = min(args.k_eval,len(eval_api_corpus))
 
     logger.info("Setting the prompt and answer templates")
@@ -885,12 +700,15 @@ def main():
 
     train_eval_config = {
         "dataset" : dataset,
+        "dataset_name" : args.dataset,
         "retr_tokenizer" : retr_tokenizer, 
         "retr_model" : retr_model,
         "infer_tokenizer" : infer_tokenizer,
         "infer_model" : infer_model,
         "train_api_corpus" : train_api_corpus,
         "eval_api_corpus" : eval_api_corpus,
+        "eval_strategy" : args.eval_strategy,
+        "eval_steps" : args.eval_steps,
         "prompt_template" : prompt_template["prompt_template"],
         "instruction_prompt" : instruction,
         "data_collator_completion" : data_collator_completion,

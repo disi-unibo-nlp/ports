@@ -47,7 +47,7 @@ class DatasetDownloader():
 
         if self.dataset_name == "apibank":
             for k in dataset.keys():
-                dataset[k] = dataset[k].map(__parse_apibank, remove_columns=dataset[k].column_names)
+                dataset[k] = dataset[k].map(__parse_apibank)
 
         return dataset
 
@@ -186,11 +186,11 @@ class TripletCollator(DataCollatorMixin):
         prompted_q_neg = []
         for item in batch:
           sub_prompted_neg = []
-          #print(item)
-          #print(len(negatives[0]))
           for neg_i in range(len(negatives[0])):
-            #print(item['negative'][neg_i])
-            _p_neg = get_prompted_q_doc(prompt_template=prompt_template, document=item['negative'][neg_i], query=item['query'], answer=item['neg_answer'][neg_i], instruction_prompt=self.instruction_prompt)
+            
+            #_p_neg = get_prompted_q_doc(prompt_template=prompt_template, document=item['negative'][neg_i], query=item['query'], answer=item['neg_answer'][neg_i], instruction_prompt=self.instruction_prompt)
+            _p_neg = get_prompted_q_doc(prompt_template=prompt_template, document=item['negative'][neg_i], query=item['query'], answer=item['pos_answer'], instruction_prompt=self.instruction_prompt)
+            
             sub_prompted_neg.append(_p_neg)
           prompted_q_neg.append(sub_prompted_neg)
 
@@ -284,6 +284,7 @@ class EvalTripletCollator(DataCollatorMixin):
         }
 
 
+import json
 
 def get_train_dataloader(dataset,
                          api_corpus_list : List[str],
@@ -302,6 +303,11 @@ def get_train_dataloader(dataset,
                                                               num_negatives_per_positive=num_neg_examples,
                                                               split='train', 
                                                               start_seed = epoch_number)
+
+    with open("/call-me-replug/main/src_port/out/out_results.jsonl", "w") as f_out:
+        for tr in triplets:
+            json.dump(tr, f_out)
+            f_out.write("\n")
 
     triplet_dataset = TripletDataset(triplets)
 

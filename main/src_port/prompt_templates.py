@@ -1,11 +1,21 @@
-INSTRUCTION = """You are a function caller. Given a user query and the definition of a single API function, generate the appropriate function call. Return only the function call, using single quotes for strings and separating parameters with commas.
+INSTRUCTION = """You are a function caller. You are given a user query and the definition of a single API function. 
+You must generate a function call using the exact name and parameters of the provided API function. You are not allowed to use any other function besides the one given. 
+Return only the function call, using single quotes for strings and separating parameters with commas.
+
+You are not permitted to deviate from the given API function in any way. You must use the exact function name and parameter types specified, even if you think another function would be more appropriate for the user's request.
 
 Example:
-Function: add_reminder(text: str, date: str, time: str)
-User: "Add a reminder to buy groceries tomorrow at 2 PM"
-Response: add_reminder('Buy groceries', 'tomorrow', '2 PM')
+-----------
+API: 
+def add_reminder(text: str, date: str, time: str):
+  <api description>
+Query: 
+"Add a reminder to buy groceries tomorrow at 2 PM"
+Response: 
+add_reminder('Buy groceries', 'tomorrow', '2 PM')
+-----------
 
-Here's the API definition:
+Here is the API definition of the function you must use to fulfill the user's request:
 """
 
 TOOL_LLAMA_GROQ_PROMPT = """
