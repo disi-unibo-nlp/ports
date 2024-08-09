@@ -7,6 +7,54 @@ import torch.nn.functional as F
 from transformers import AutoTokenizer
 from typing import List
 from tqdm import tqdm
+from sklearn.metrics import ndcg_score
+
+import numpy as np
+
+def get_ndcg_scores(ndcg_k_values, 
+                    batch_data, 
+                    gold_ids,
+                    similarities,
+                    api_corpus = None,
+                    eval_triplets = None):
+    """
+    Compute the NDCG scores for the batch, sum them up to the previous batches' values
+    """
+    len_corpus = similarities.shape[-1]
+    ndcg_scores = [[] for _ in range(len(ndcg_k_values))]
+
+    n_data = batch_data["query"]["input_ids"].shape[0]
+
+    for ex_index in range(n_data):
+
+        true_relevance = np.zeros(len_corpus)
+        pos_idx = gold_ids[ex_index].cpu().item()
+        true_relevance[pos_idx] = 1
+
+        scores = similarities[ex_index].cpu().numpy()
+
+
+        # print("-"*100)
+        # print(f'QUERY:" {eval_triplets[ex_index]["query"]}')
+        # print(f'POS:" {eval_triplets[ex_index]["positive"]}')
+        # print(f'SIMILARITY: {scores[pos_idx]}')
+        # if (max_sim := scores.argmax()) != pos_idx:
+        #     print("*"*50)
+        #     print(f"MAX SIM: {scores[pos_idx]}")
+        #     print(api_corpus[max_sim])
+        # print("-"*100)
+
+        for k_index, k_val in enumerate(ndcg_k_values):
+            ndcg_scores[k_index].append(
+                ndcg_score(
+                    [true_relevance],
+                    [scores],
+                    k=k_val # consider only the highest k scores
+                )
+            )
+
+    return ndcg_scores
+
 
 
 # --------------------------------------------------------

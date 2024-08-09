@@ -85,7 +85,8 @@ from src_port.utils import (
     compute_embeddings,
     get_gradient_norm,
     encode_query,
-    embed_corpus
+    embed_corpus,
+    get_ndcg_scores
 )
 
 from src_port.dataset_helper import (
@@ -106,24 +107,32 @@ from src_port.loss_functions import (
 
 def evaluate(retr_model,
              eval_dataloader,
+             eval_triplets,
              corpus_embeddings,
-             device, k):
+             device : str =  "cuda", 
+             k : int = 3,
+             api_corpus : List[str] = None):
     retr_model.eval()
 
     ranks = [0 for _ in range(k)]
 
-    # with torch.no_grad():
-    #     for batch in tqdm(eval_dataloader, total=len(eval_dataloader), desc="TESTING EMBEDDING"):
-    #         queries = batch["query"]
-    #         # Compute query embeddings
-    #         query_embeddings = encode_query(retr_model, queries, device)
+    ndcg_k_values = [1, 30, 50]
+    ndcg_scores = [[] for _ in range(len(ndcg_k_values))]
+
 
     with torch.no_grad():
-        for batch in tqdm(eval_dataloader, total=len(eval_dataloader)):
+        for bid, batch in tqdm(enumerate(eval_dataloader), total=len(eval_dataloader)):
             gold_ids = batch["gold_retrieval_ids"].to(device)
             #print(f"MAX IDS: {torch.max(gold_ids,-1).values.max(-1).values.item()} | Corpus shape: {corpus_embeddings.shape}")
             queries = batch["query"]
+            bs = queries["input_ids"].shape[0]
 
+            
+            #print(f"CHECKING CORRECTNESS")
+            for __i, _i in enumerate(range(bid*bs, bid*bs+bs)):
+                _idx = batch["gold_retrieval_ids"][__i].item()
+                assert eval_triplets[_i]["positive"] == api_corpus[_idx]
+            #print(f"CHECKING CORRECTNESS OK")
 
             # Compute query embeddings
             query_embeddings = encode_query(retr_model, queries, device)
@@ -136,18 +145,23 @@ def evaluate(retr_model,
             # Compute ranks
             _, indices = all_similarities.topk(k, dim=1, largest=True)
 
-            #print(f"QUERY: {query_embeddings.shape} | IDS: {gold_ids.shape} | SIM: {all_similarities.shape} | k: {k} | indices: {indices.shape} | gold {gold_ids.T.shape}")
-
 
             for _k in range(k):
               rank_at_n = torch.any(indices[:, :_k+1] == gold_ids.unsqueeze(0).T, dim=-1).sum()
               ranks[_k] += rank_at_n
+            
+            # Compute NDCG score
+            ndcg_scores = get_ndcg_scores(ndcg_k_values, batch, gold_ids, all_similarities, api_corpus, [eval_triplets[i] for i in range(bid*bs, bid*bs+bs)])
 
     # Normalize ranks
     num_samples = len(eval_dataloader.dataset)
     ranks = [r / num_samples * 100 for r in ranks]
+    
+    ndcg_score_avg = [0 for _ in range(len(ndcg_k_values))]
+    for i, k_val in enumerate(ndcg_k_values):
+        ndcg_score_avg[i] = sum(ndcg_scores[i]) / num_samples
 
-    return ranks
+    return ranks, ndcg_score_avg
 
 
 
@@ -170,7 +184,7 @@ def run_evaluation(retr_model : AutoModel,
         "retrieval_tokenizer" : retr_tokenizer,
         "batch_size" : eval_batch_size
     }
-    eval_triplet_dataloader = get_eval_dataloader(**eval_data_config)
+    eval_triplet_dataloader, eval_triplets = get_eval_dataloader(**eval_data_config)
 
     logger.info("Embedding Tool Corpus")
     eval_corpus_embeddings = embed_corpus(retr_model,
@@ -182,24 +196,37 @@ def run_evaluation(retr_model : AutoModel,
     eval_corpus_embeddings = eval_corpus_embeddings.to(device)
 
     logger.info("Compuring rank accuracy")
-    ranks = evaluate(retr_model,
+    ranks, ndcg_scores = evaluate(retr_model,
                     eval_triplet_dataloader,
+                    eval_triplets,
                     eval_corpus_embeddings,
                     device,
-                    k=k_eval)
+                    k=k_eval,
+                    api_corpus=eval_api_corpus)
 
     # Print results
     print("\n")
     print("EVALUATION")
     print("*"*50)
+    print(">>> R@K")
     for n in range(k_eval):
         print(f"RANK@{n+1}: {ranks[n]:.2f}%")
+    print("-"*30)
+    print(">>> NDCG@K")
+    ndcg_k_values = [1, 3, 5]
+    for n, _k in enumerate(ndcg_k_values):
+        print(f"NDCG@{_k}: {ndcg_scores[n]:.2f}%")
     print("*"*50)
     print("\n")
 
-    wandb.log({
-        f"RANK@{n+1}" : ranks[n] for n in range(k_eval)
-    })
+    log_eval = {}
+    for n in range(k_eval):
+        log_eval[f"RANK@{n+1}"] = ranks[n]
+
+    for n, _k in enumerate(ndcg_k_values):
+        log_eval[f"NDCG@{_k}"] = ndcg_scores[n]
+
+    wandb.log(log_eval)
 
     retr_model.train()
     del eval_corpus_embeddings
@@ -257,6 +284,7 @@ def train(dataset : Dataset,
     wandb.init(project=wandb_project_name, 
                name=wandb_run_name,
                config=config)
+    wandb.watch(retr_model, log_freq=log_freq)
     
     # First evaluation
     logger.info(f"Starting Initial Evaluation")
@@ -554,7 +582,7 @@ def train(dataset : Dataset,
 
 def main():
     parser = argparse.ArgumentParser(description='PORT training')
-    parser.add_argument('--dataset', type=str, default="bfcl", choices=["bfcl", "apibank", "apibench", "octopus", "toole", "toolbench"], help='Dataset name for training and avaluation')
+    parser.add_argument('--dataset', type=str, default="bfcl", choices=["bfcl", "apibank", "apibench", "octopus", "octopus-overlap", "toole", "toole-overlap", "toolbench"], help='Dataset name for training and avaluation')
 
     # Models
     parser.add_argument('--inference_model_name', type=str, default="llama3-8B", choices=["llama3-8B", "codestral-22B", "gemma2-2B", "groqLlama3Tool-8B"], help="Pseudo-Name of the generative model to use for function calling")

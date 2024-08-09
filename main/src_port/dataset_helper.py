@@ -23,7 +23,9 @@ class DatasetDownloader():
             "apibench" : "APIBench",
             "octopus" : "OctopusNonOverlapping",
             "toole" : "ToolENonOverlapping",
-            "toolbench" : "ToolBench"
+            "toolbench" : "ToolBench",
+            "toole-overlap" : "ToolEOverlapping",
+            "octopus-overlap" : "OctopusOverlapping"
         }
 
         data_path = "/".join([base_ds_path, dataset_mapping[dataset_name]])
@@ -85,7 +87,8 @@ def create_triplets_with_unique_multiple_negatives(dataset : Dataset,
     """
 
     triplets = []
-    questions = dataset[split]["query"]
+    #questions = dataset[split]["query"]
+    questions = dataset[split]["query_for_retrieval"]
     augmented_descriptions = dataset[split]["api_description"]
     answers = dataset[split]["answer"]
 
@@ -118,7 +121,8 @@ def create_triplets_with_unique_multiple_negatives(dataset : Dataset,
 def create_instances_wo_negs(dataset : Dataset,
                              split : str = 'train'):
     data = []
-    questions = dataset[split]["query"]
+    #questions = dataset[split]["query"]
+    questions = dataset[split]["query_for_retrieval"]
     augmented_descriptions = dataset[split]["api_description"]
     answer = dataset[split]["answer"]
 
@@ -229,8 +233,8 @@ class TripletCollator(DataCollatorMixin):
         # Get gold retrieval_ids wrt corpus
         gold_indices = []
         for pos_doc in positives:
-          pos_idx = self.corpus.index(pos_doc)
-          gold_indices.append(pos_idx)
+            pos_idx = self.corpus.index(pos_doc)
+            gold_indices.append(pos_idx)
         gold_indices = torch.tensor(gold_indices)
 
 
@@ -255,6 +259,7 @@ class EvalTripletCollator(DataCollatorMixin):
         self.corpus = def_corpus
         self.max_length_retr = max_length_retrieval
 
+
     def __call__(self, batch):
         queries = [item['query'] for item in batch]
         positives = [item['positive'] for item in batch]
@@ -274,6 +279,11 @@ class EvalTripletCollator(DataCollatorMixin):
         for pos_doc in positives:
             pos_idx = self.corpus.index(pos_doc)
             gold_indices.append(pos_idx)
+        
+        
+        for _idx, el in enumerate(gold_indices):
+            assert self.corpus[el] == positives[_idx]
+
         gold_indices = torch.tensor(gold_indices)
 
 
@@ -304,10 +314,10 @@ def get_train_dataloader(dataset,
                                                               split='train', 
                                                               start_seed = epoch_number)
 
-    with open("/call-me-replug/main/src_port/out/out_results.jsonl", "w") as f_out:
-        for tr in triplets:
-            json.dump(tr, f_out)
-            f_out.write("\n")
+    # with open("/call-me-replug/main/src_port/out/out_results.jsonl", "w") as f_out:
+    #     for tr in triplets:
+    #         json.dump(tr, f_out)
+    #         f_out.write("\n")
 
     triplet_dataset = TripletDataset(triplets)
 
@@ -320,7 +330,7 @@ def get_train_dataloader(dataset,
 
     triplet_dataloader = DataLoader(triplet_dataset,
                                 batch_size=batch_size,
-                                shuffle=True,
+                                shuffle=False,
                                 collate_fn=train_collator)
                                     
     return triplet_dataloader
@@ -341,8 +351,8 @@ def get_eval_dataloader(dataset,
 
     eval_dataloader = DataLoader(eval_triplet_dataset,
                                 batch_size=batch_size,
-                                shuffle=True,
+                                shuffle=False,
                                 collate_fn=eval_collator)
     
     
-    return eval_dataloader
+    return eval_dataloader, eval_triplet_dataset
