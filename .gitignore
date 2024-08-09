@@ -162,6 +162,7 @@ cython_debug/
 */wandb/*
 *.out
 mounted/models*
+mounted/trained-models
 mounted/tmp
 mounted/function-calling-repos
 mounted/datasets/non-overlapping-functions-dataset
