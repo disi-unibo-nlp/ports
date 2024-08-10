@@ -111,32 +111,41 @@ def evaluate(retr_model,
              corpus_embeddings,
              device : str =  "cuda", 
              k : int = 3,
-             api_corpus : List[str] = None):
+             api_corpus : List[str] = None,
+             retr_tokenizer : AutoTokenizer = None):
     retr_model.eval()
 
     ranks = [0 for _ in range(k)]
 
-    ndcg_k_values = [1, 30, 50]
+    ndcg_k_values = [1, 3, 5]
     ndcg_scores = [[] for _ in range(len(ndcg_k_values))]
-
 
     with torch.no_grad():
         for bid, batch in tqdm(enumerate(eval_dataloader), total=len(eval_dataloader)):
-            gold_ids = batch["gold_retrieval_ids"].to(device)
+            #gold_ids = batch["gold_retrieval_ids"].to(device)
             #print(f"MAX IDS: {torch.max(gold_ids,-1).values.max(-1).values.item()} | Corpus shape: {corpus_embeddings.shape}")
             queries = batch["query"]
             bs = queries["input_ids"].shape[0]
 
-            
-            #print(f"CHECKING CORRECTNESS")
-            for __i, _i in enumerate(range(bid*bs, bid*bs+bs)):
-                _idx = batch["gold_retrieval_ids"][__i].item()
-                assert eval_triplets[_i]["positive"] == api_corpus[_idx]
-            #print(f"CHECKING CORRECTNESS OK")
+
+            gold_ids = []
+            for _i, i in enumerate(range(bid*bs,bid*bs+bs)):
+                pos = eval_triplets[i]["positive"]
+                # print("-"*100)
+                # print(pos)
+                # print("-"*30)
+                # print(eval_triplets[i]["query"])
+                # print("-"*50)
+                # print(retr_tokenizer.decode(batch["positive"]["input_ids"][_i,:], remove_special_tokens=True))
+                # print("-"*30)
+                # print(retr_tokenizer.decode(batch["query"]["input_ids"][_i,:], remove_special_tokens=True))
+                # print("-"*100)
+                idx = api_corpus.index(pos)
+                gold_ids.append(idx)
+            gold_ids = torch.tensor(gold_ids).view(1,-1).to(device)            
 
             # Compute query embeddings
             query_embeddings = encode_query(retr_model, queries, device)
-
 
             # Compute similarities with the entire corpus
             all_similarities = torch.matmul(query_embeddings, corpus_embeddings.T)  # [bs, num_docs]
@@ -147,11 +156,14 @@ def evaluate(retr_model,
 
 
             for _k in range(k):
-              rank_at_n = torch.any(indices[:, :_k+1] == gold_ids.unsqueeze(0).T, dim=-1).sum()
+              #rank_at_n = torch.any(indices[:, :_k+1] == gold_ids.unsqueeze(0).T, dim=-1).sum()
+              rank_at_n = torch.any(indices[:, :_k+1] == gold_ids.T, dim=-1).sum()
               ranks[_k] += rank_at_n
             
             # Compute NDCG score
-            ndcg_scores = get_ndcg_scores(ndcg_k_values, batch, gold_ids, all_similarities, api_corpus, [eval_triplets[i] for i in range(bid*bs, bid*bs+bs)])
+            this_ndcg_scores = get_ndcg_scores(ndcg_k_values, batch, gold_ids.squeeze(0), all_similarities, api_corpus, [eval_triplets[i] for i in range(bid*bs, bid*bs+bs)])
+            for i, _ in enumerate(this_ndcg_scores):
+                ndcg_scores[i] += this_ndcg_scores[i]
 
     # Normalize ranks
     num_samples = len(eval_dataloader.dataset)
@@ -202,7 +214,8 @@ def run_evaluation(retr_model : AutoModel,
                     eval_corpus_embeddings,
                     device,
                     k=k_eval,
-                    api_corpus=eval_api_corpus)
+                    api_corpus=eval_api_corpus,
+                    retr_tokenizer=retr_tokenizer)
 
     # Print results
     print("\n")
@@ -215,7 +228,7 @@ def run_evaluation(retr_model : AutoModel,
     print(">>> NDCG@K")
     ndcg_k_values = [1, 3, 5]
     for n, _k in enumerate(ndcg_k_values):
-        print(f"NDCG@{_k}: {ndcg_scores[n]:.2f}%")
+        print(f"NDCG@{_k}: {ndcg_scores[n]:.2f}")
     print("*"*50)
     print("\n")
 
@@ -482,7 +495,7 @@ def train(dataset : Dataset,
                 _pref_loss, _pos_reward, _neg_reward, _pref_ratio, _maean_prob_ratio = odds_ratio_loss(
                     positive_retr_log_prob=pos_retrieval_prob.log(),
                     negative_retr_log_prob=neg_retrieval_prob.log(),
-                    beta=beta
+                    beta=1#beta
                 )
                 pref_loss += _pref_loss.mean()
                 pos_rewards.append(_pos_reward.mean())  # weighted log retr prob (w = beta) for the positive sample
@@ -517,7 +530,7 @@ def train(dataset : Dataset,
             pbar.set_postfix({'Loss': loss.item(), 'RePlug Loss' : ppl_pr_KL_loss.item(), "OPRO Loss" : -pref_loss.item(), "Retrieval Compared Accuracy" : retrieval_accuracy.mean().cpu().item()})
 
 
-            if bid % log_freq == 0 or bid == 0:
+            if bid % log_freq == 0:
                 
                 wandb.log({
                     "ports_loss": loss.item(),
@@ -546,7 +559,7 @@ def train(dataset : Dataset,
             del pref_ratio, retrieval_accuracy, pos_rewards, neg_rewards, maean_prob_ratio
             torch.cuda.empty_cache()
 
-            if eval_strategy == "steps" and bid % eval_steps == 0:
+            if eval_strategy == "steps" and bid % eval_steps == 0 and bid != 0:
 
                 logger.info(f"Starting evaluation epoch {epoch+1}/{num_epochs} - step {bid*eval_steps}")
                 eval_config = {

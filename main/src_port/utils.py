@@ -25,6 +25,7 @@ def get_ndcg_scores(ndcg_k_values,
 
     n_data = batch_data["query"]["input_ids"].shape[0]
 
+
     for ex_index in range(n_data):
 
         true_relevance = np.zeros(len_corpus)
@@ -33,6 +34,10 @@ def get_ndcg_scores(ndcg_k_values,
 
         scores = similarities[ex_index].cpu().numpy()
 
+        # print("-"*10)
+        # print(pos_idx)
+        # print(scores)
+        # print("-"*10)
 
         # print("-"*100)
         # print(f'QUERY:" {eval_triplets[ex_index]["query"]}')
@@ -52,6 +57,7 @@ def get_ndcg_scores(ndcg_k_values,
                     k=k_val # consider only the highest k scores
                 )
             )
+            #print(f"k_val ---> {ndcg_scores[k_index][-1]}")
 
     return ndcg_scores
 

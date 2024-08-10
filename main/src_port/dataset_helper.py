@@ -280,12 +280,10 @@ class EvalTripletCollator(DataCollatorMixin):
             pos_idx = self.corpus.index(pos_doc)
             gold_indices.append(pos_idx)
         
-        
-        for _idx, el in enumerate(gold_indices):
-            assert self.corpus[el] == positives[_idx]
+        # for _idx, el in enumerate(gold_indices):
+        #     assert self.corpus[el] == positives[_idx]
 
         gold_indices = torch.tensor(gold_indices)
-
 
         return {
             'query': query_encodings,

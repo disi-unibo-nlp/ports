@@ -1,6 +1,6 @@
 #!/bin/bash
 
-DEVICE=0
+DEVICE=2
 SEED=42
 
 
@@ -9,7 +9,7 @@ SEED=42
 # 'gemma2-2B' : "google/gemma-2-2b-it",
 # 'groqLlama3Tool-8B' : "Groq/Llama-3-Groq-8B-Tool-Use"
 
-INFERENCE_MODEL_PSEUDONAME="llama3-8B" 
+INFERENCE_MODEL_PSEUDONAME="groqLlama3Tool-8B" 
 
 RETRIEVAL_MAX_SEQ_LEN=512
 
@@ -54,7 +54,7 @@ MODELS=("FacebookAI/roberta-base" "BAAI/bge-base-en-v1.5")
 
 #RETRIEVAL_MODEL_NAME="FacebookAI/roberta-base"
 
-DATASET_NAME="toole"
+DATASET_NAME="toole-overlap"
 
 BETA=0.5
 GAMMA=0.3
@@ -128,7 +128,6 @@ for RETRIEVAL_MODEL_NAME in ${MODELS[@]}; do
                                                             --max_train_samples $MAX_TRAIN_SAMPLES \
                                                             #--max_eval_samples $MAX_EVAL_SAMPLES
 
-
     BETA=0.7
     GAMMA=0.3
 
@@ -160,4 +159,5 @@ for RETRIEVAL_MODEL_NAME in ${MODELS[@]}; do
                                                             --load_in_4bit \
                                                             --max_train_samples $MAX_TRAIN_SAMPLES \
                                                             #--max_eval_samples $MAX_EVAL_SAMPLES
+
 done
