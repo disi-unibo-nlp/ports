@@ -131,18 +131,9 @@ def evaluate(retr_model,
             gold_ids = []
             for _i, i in enumerate(range(bid*bs,bid*bs+bs)):
                 pos = eval_triplets[i]["positive"]
-                # print("-"*100)
-                # print(pos)
-                # print("-"*30)
-                # print(eval_triplets[i]["query"])
-                # print("-"*50)
-                # print(retr_tokenizer.decode(batch["positive"]["input_ids"][_i,:], remove_special_tokens=True))
-                # print("-"*30)
-                # print(retr_tokenizer.decode(batch["query"]["input_ids"][_i,:], remove_special_tokens=True))
-                # print("-"*100)
                 idx = api_corpus.index(pos)
                 gold_ids.append(idx)
-            gold_ids = torch.tensor(gold_ids).view(1,-1).to(device)            
+            
 
             # Compute query embeddings
             query_embeddings = encode_query(retr_model, queries, device)
@@ -151,9 +142,24 @@ def evaluate(retr_model,
             all_similarities = torch.matmul(query_embeddings, corpus_embeddings.T)  # [bs, num_docs]
             all_similarities = all_similarities.squeeze(0)
 
+            # for _i, i in enumerate(range(bid*bs,bid*bs+bs)):
+            #     top_sim =  all_similarities[_i,:].max().item()
+            #     real_sim = all_similarities[_i,gold_ids[_i]].item()
+            #     real_top = all_similarities[_i,:].argmax().item()
+            #     print("-"*100)  
+            #     q = eval_triplets[i]["query"]
+            #     rel_pos = eval_triplets[i]["positive"]
+            #     predicted_pos = api_corpus[real_top]
+            #     print(f">> QUERY: {q}")
+            #     print(f">> REAL POS {real_sim}:\n{rel_pos}")
+            #     print(f">> PRED POS {top_sim}:\n{predicted_pos}")
+            #     print("-"*100)
+
             # Compute ranks
             _, indices = all_similarities.topk(k, dim=1, largest=True)
 
+            
+            gold_ids = torch.tensor(gold_ids).view(1,-1).to(device)
 
             for _k in range(k):
               #rank_at_n = torch.any(indices[:, :_k+1] == gold_ids.unsqueeze(0).T, dim=-1).sum()
@@ -320,6 +326,7 @@ def train(dataset : Dataset,
     train_data_config = {
         "dataset" : dataset,
         "api_corpus_list" : train_api_corpus,
+        "retr_model" : retr_model,
         "retrieval_max_length" : retriever_max_seq_length,
         "generateor_max_length" : inference_max_seq_length,
         "retrieval_tokenizer" : retr_tokenizer,
@@ -349,6 +356,7 @@ def train(dataset : Dataset,
         train_data_config = {
             "dataset" : dataset,
             "api_corpus_list" : train_api_corpus,
+            "retr_model" : retr_model,
             "retrieval_max_length" : retriever_max_seq_length,
             "generateor_max_length" : inference_max_seq_length,
             "retrieval_tokenizer" : retr_tokenizer,

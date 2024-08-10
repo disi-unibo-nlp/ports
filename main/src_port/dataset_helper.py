@@ -3,9 +3,70 @@ from transformers import AutoTokenizer
 from typing import List
 import torch
 import random
+from transformers import AutoModel
 
 from transformers.data.data_collator import DataCollatorMixin
 from torch.utils.data import DataLoader, Dataset
+
+
+from torch.nn.functional import cosine_similarity
+
+from src_port.utils import compute_embeddings
+
+import torch
+import torch.nn.functional as F
+
+def create_triplets_with_similar_negatives(dataset, 
+                                          retr_model, 
+                                          tokenizer, 
+                                          num_negatives_per_positive=1, 
+                                          retrieval_max_length=512, 
+                                          split='train', device="cuda"):
+    triplets = []
+    questions = dataset[split]["query_for_retrieval"]
+    augmented_descriptions = dataset[split]["api_description"]
+    answers = dataset[split]["answer"]
+
+    # Pre-compute all document embeddings
+    doc_encodings = tokenizer(augmented_descriptions, truncation=True, max_length=retrieval_max_length, padding='max_length', return_tensors='pt')
+    doc_embeddings = compute_embeddings(retr_model, doc_encodings, device)
+
+    for i in range(len(questions)):
+        query = questions[i]
+        positive = augmented_descriptions[i]
+
+        # Compute query embedding
+        query_encoding = tokenizer([query], truncation=True, max_length=retrieval_max_length, padding='max_length', return_tensors='pt')
+        query_embedding = compute_embeddings(retr_model, query_encoding, device)
+
+        # Compute similarities
+        similarities = F.cosine_similarity(query_embedding, doc_embeddings)
+        
+        # Get top k+1 similar indices to ensure we have enough after potential removal of positive
+        top_k = num_negatives_per_positive + 1
+        similar_indices = similarities.argsort(descending=True)[:top_k+1].squeeze().tolist()
+
+        # Check if positive is in top k and handle accordingly
+        if i in similar_indices[:top_k]:
+            # If positive is in top k, remove it and use the next most similar
+            similar_indices.remove(i)
+            negative_indices = similar_indices[:num_negatives_per_positive]
+        else:
+            # If positive is not in top k, use the top k as negatives
+            negative_indices = [idx for idx in similar_indices[:top_k] if idx != i]
+
+        assert len(negative_indices) == num_negatives_per_positive
+
+        triplets.append({
+            'query': query,
+            'positive': positive,
+            'negative': [augmented_descriptions[idx] for idx in negative_indices],
+            'pos_answer': answers[i],
+            'neg_answer': [answers[idx] for idx in negative_indices]
+        })
+
+    return triplets
+
 
 
 class DatasetDownloader():
@@ -296,6 +357,7 @@ import json
 
 def get_train_dataloader(dataset,
                          api_corpus_list : List[str],
+                         retr_model : AutoModel,
                          retrieval_tokenizer : AutoTokenizer,
                          inference_tokenizer : AutoTokenizer,
                          prompt_template : str = "",
@@ -307,10 +369,17 @@ def get_train_dataloader(dataset,
     """
     Create triplets and return train dataloader
     """
-    triplets = create_triplets_with_unique_multiple_negatives(dataset,
-                                                              num_negatives_per_positive=num_neg_examples,
-                                                              split='train', 
-                                                              start_seed = epoch_number)
+    # triplets = create_triplets_with_unique_multiple_negatives(dataset,
+    #                                                           num_negatives_per_positive=num_neg_examples,
+    #                                                           split='train', 
+    #                                                           start_seed = epoch_number)
+
+    triplets = create_triplets_with_similar_negatives(dataset,
+                                                      retr_model,
+                                                      retrieval_tokenizer,
+                                                      retrieval_max_length=retrieval_max_length, 
+                                                      num_negatives_per_positive=num_neg_examples,
+                                                      split='train')
 
     # with open("/call-me-replug/main/src_port/out/out_results.jsonl", "w") as f_out:
     #     for tr in triplets:
@@ -354,3 +423,4 @@ def get_eval_dataloader(dataset,
     
     
     return eval_dataloader, eval_triplet_dataset
+
