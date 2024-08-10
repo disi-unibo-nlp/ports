@@ -125,7 +125,7 @@ def main():
 
     def compute_embeddings(corpus, batch_size=32):
         all_embeddings = []
-        max_length = retr_tokenizer.model_max_length
+        # max_length = retr_tokenizer.model_max_length
         for i in range(0, len(corpus), batch_size):
             batch = corpus[i:i+batch_size]
             batch = retr_tokenizer(batch, padding=True, truncation=True, return_tensors='pt')
@@ -145,6 +145,9 @@ def main():
     ANSWER = PROMPT_TEMPLATES[infer_model_type]["answer_template"]
     
     dataset = load_dataset(args.dataset_path, "parsed_data")
+    if args.dataset_path == "ToolRetriever/ToolBench":
+        dataset = dataset['train'].filter(lambda x: x['group'] == 'G3')
+        dataset = dataset['train'].train_test_split(test_size=0.3, seed=42)
     dataset = dataset.shuffle(seed=42).flatten_indices()
     query_column = args.query_column
     response_column = args.response_column
