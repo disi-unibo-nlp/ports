@@ -13,3 +13,6 @@ byobu attach-session -t 1
 wandb sweep sweeps_file.yaml
 wandb agent sweep_id
 wandb sweep --stop entity/project/sweep_ID
+
+# get gpu usages
+scontrol show job -d | grep "IDX\|UserId"

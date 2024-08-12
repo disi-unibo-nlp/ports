@@ -146,8 +146,10 @@ def main():
     
     dataset = load_dataset(args.dataset_path, "parsed_data")
     if args.dataset_path == "ToolRetriever/ToolBench":
-        dataset = dataset['train'].filter(lambda x: x['group'] == 'G3')
+        dataset['train'] = dataset['train'].filter(lambda x: x['group'] == 'G3' and bool(x['api_description'].strip()))
         dataset = dataset['train'].train_test_split(test_size=0.3, seed=42)
+    elif args.dataset_path == "ToolRetriever/BFCL":
+        dataset = dataset['test'].train_test_split(test_size=0.3, seed=42)
     dataset = dataset.shuffle(seed=42).flatten_indices()
     query_column = args.query_column
     response_column = args.response_column
@@ -307,16 +309,16 @@ def main():
         return loss
 
     # evaluation utility functions
-    verify_relevancy = lambda response, doc: response.split('(')[0] in doc
+    verify_relevancy = lambda api, doc: api == doc
 
     def get_relevant_docs(batch_data, documents):
         """
         For each example in the batch, retrieve its relevant document
         """        
         rel_docs = []
-        for response in batch_data[response_column]:
+        for api in batch_data["api_description"]:
             for i, doc in enumerate(documents):
-                if verify_relevancy(response, doc):
+                if verify_relevancy(api, doc):
                     rel_docs.append(i)
                     break
         return torch.tensor(rel_docs).unsqueeze(-1)
@@ -341,7 +343,7 @@ def main():
         """
         for ex_index in range(curr_bs):
             true_relevance = np.array([
-                verify_relevancy(batch_data[response_column][ex_index], doc)
+                verify_relevancy(batch_data["api_description"][ex_index], doc)
                 for doc in (eval_documents if args.eval_docs_path else train_documents)
             ])
             for i, k_val in enumerate(ndcg_k_values):
@@ -392,12 +394,16 @@ def main():
                 # if verbose:
                 #     logger.info(f"EVALUATION LOSS: {loss}")
             ranks = [r / len(eval_data_loader.dataset) * 100 for r in ranks]
+            rank_avg = sum(ranks[:3]) / 3
             for n in range(k):
                 if verbose:
                     logger.info(f"RANK@{n+1}: {ranks[n]}")
                 if log_wandb:
-                    wandb.log({f"Rank@{n+1}": ranks[n] for n in range(k)})
-                    wandb.log({"RankAvg": sum(ranks[:3]) / 3})    
+                    wandb.log({f"Rank@{n+1}": ranks[n]})
+            if verbose:
+                logger.info(f"RANKAVG: {rank_avg}")
+            if log_wandb:
+                wandb.log({"RankAvg": rank_avg})  
 
             for i, k_val in enumerate(ndcg_k_values):
                 ndcg_score_avg = sum(ndcg_scores[i]) / len(eval_data_loader.dataset)
