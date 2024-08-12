@@ -172,3 +172,7 @@ keys/
 *.pth
 mounted/toole_diff_docs_non_overlap
 cache*.arrow
+
+
+
+main/src_port/logs/*
