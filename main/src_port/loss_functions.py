@@ -12,8 +12,15 @@ def compute_loss(Q, Pr, kl_div):
     Computes KL(Pr||Q)
     (Q and P are inverted in the function parameters, because it's how pytorch wants them)
     """
-    Q_log = torch.log(Q)
-    divergence = kl_div(Q_log, Pr).sum(-1)
+
+    # To avoid underflow issues when computing this quantity, this loss expects the argument input in the log-space.
+    
+    #Q_log = torch.log(Q)
+    # divergence = kl_div(Q_log, Pr).sum(-1)
+    
+    Pr_log = torch.log(Pr)
+    divergence = kl_div(Pr_log, Q).sum(-1)
+    
     loss = divergence.mean()
     return loss
 
@@ -71,7 +78,8 @@ def get_perplexity(outputs,
     
     elem_wise_loss = cross_entropy(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
     loss_sum_per_sample = elem_wise_loss.view(shift_logits.size(0), shift_logits.size(1)).sum(dim=1)
-    num_elems_per_sample = torch.sum(shift_labels.ne(padding_token_ids), dim=1)
+    #num_elems_per_sample = torch.sum(shift_labels.ne(padding_token_ids), dim=1)
+    num_elems_per_sample = torch.sum(shift_labels.ne(-100), dim=1)
     loss_per_sample = loss_sum_per_sample / num_elems_per_sample
 
     return -loss_per_sample

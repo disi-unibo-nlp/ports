@@ -1,6 +1,6 @@
 #!/bin/bash
 
-DEVICE=0
+DEVICE=1
 SEED=42
 
 
@@ -8,7 +8,6 @@ SEED=42
 # 'codestral-22B' : "mistralai/Codestral-22B-v0.1",
 # 'gemma2-2B' : "google/gemma-2-2b-it",
 # 'groqLlama3Tool-8B' : "Groq/Llama-3-Groq-8B-Tool-Use"
-
 
 
 RETRIEVAL_MAX_SEQ_LEN=512
@@ -19,52 +18,50 @@ PADDING_SIDE="left"
 # Data
 N_NEGS=3
 
-
-
-LR="1e-4"
+LR="1e-5"
 LR_SCHEDULER="cosine"
 
 TRAIN_BATCH_SIZE=2
 EVAL_BATCH_SIZE=4
-PREPROCESS_BATCH_SIZE=4
+PREPROCESS_BATCH_SIZE=16
 
 # Loss config
 LAMBDA_WEIGHT=0.3
-
-GAMMA=0.3       # Act on Similarities
-BETA=0.3        # Act on PPL
 
 # Eval config
 K_ACC_UPPER=3
 
 
-# Tests
-MAX_TRAIN_SAMPLES=200
 MAX_EVAL_SAMPLES=200
 
 WANDB_PROJECT_NAME="PORTS_AAAI"
 
-LOG_FREQ=10
+LOG_FREQ=100
+
+
+BETA=0.5
+GAMMA=0.5
+PREF_BETA=0.1
+
+CORPUS_UPDATES=100
 
 # Train Config
-N_EPOCHS=5
-
-# MODELS=("FacebookAI/roberta-base" "BAAI/bge-base-en-v1.5")
-MODELS=("llama3-8B" "groqLlama3Tool-8B")
-#RETRIEVAL_MODEL_NAME="FacebookAI/roberta-base"
-
-DATASET_NAME="toole-overlap"
-
-BETA=0.3
-GAMMA=0.5
-
-DATASET_NAME="toole-overlap"
-RETRIEVAL_MODEL_NAME="FacebookAI/roberta-base"
+N_EPOCHS=2
 
 
 # for INFERENCE_MODEL_PSEUDONAME in ${MODELS[@]}; do
 INFERENCE_MODEL_PSEUDONAME="llama3-8B"
-WANDB_RUN_NAME="${DATASET_NAME}-${RETRIEVAL_MODEL_NAME}-${INFERENCE_MODEL_PSEUDONAME}-B${BETA}-G${GAMMA}"
+RETRIEVAL_MODEL_NAME="BAAI/bge-base-en-v1.5"
+#RETR_MODELS=("FacebookAI/roberta-base" "BAAI/bge-base-en-v1.5")
+
+MAX_TRAIN_SAMPLES=300
+
+DATASETS=("octopus" "octopus-overlap" "toole-overlap" "apibank" "apibench" "toolbench" "bfcl")
+DATASET_NAME="toolbench"
+
+# for RETRIEVAL_MODEL_NAME in ${RETR_MODELS[@]}; do
+
+WANDB_RUN_NAME="${DATASET_NAME}-${RETRIEVAL_MODEL_NAME}-${INFERENCE_MODEL_PSEUDONAME}-B${BETA}-G${GAMMA}-ORPOB${PREF_BETA}-LR${LR}"
 
 CUDA_VISIBLE_DEVICES=$DEVICE python3 main_train_port.py --dataset $DATASET_NAME \
                                                     --inference_model_name $INFERENCE_MODEL_PSEUDONAME \
@@ -77,126 +74,23 @@ CUDA_VISIBLE_DEVICES=$DEVICE python3 main_train_port.py --dataset $DATASET_NAME 
                                                     --train_batch_size $TRAIN_BATCH_SIZE \
                                                     --eval_batch_size $EVAL_BATCH_SIZE \
                                                     --preprocessing_batch_size $PREPROCESS_BATCH_SIZE \
+                                                    --n_reembedding_steps $CORPUS_UPDATES \
                                                     --padding_side $PADDING_SIDE \
                                                     --lambda_loss $LAMBDA_WEIGHT \
                                                     --n_neg_examples $N_NEGS \
                                                     --k_eval $K_ACC_UPPER \
                                                     --gamma $GAMMA \
                                                     --beta $BETA \
+                                                    --preference_weight $PREF_BETA \
                                                     --seed $SEED \
                                                     --wandb_project_name $WANDB_PROJECT_NAME \
                                                     --wandb_run_name $WANDB_RUN_NAME \
                                                     --log_freq $LOG_FREQ \
                                                     --do_train \
                                                     --do_eval \
-                                                    --eval_strategy "epoch" \
-                                                    --eval_steps 500\
+                                                    --eval_strategy "steps" \
+                                                    --eval_steps 1000 \
                                                     --load_in_4bit \
-                                                    --max_train_samples $MAX_TRAIN_SAMPLES \
+                                                    #--max_train_samples $MAX_TRAIN_SAMPLES \
                                                     #--max_eval_samples $MAX_EVAL_SAMPLES
-
-
 # done
-
-
-# RETRIEVAL_MODEL_NAME="FacebookAI/roberta-base"
-# WANDB_RUN_NAME="${DATASET_NAME}-${RETRIEVAL_MODEL_NAME}-${INFERENCE_MODEL_PSEUDONAME}-B${BETA}-G${GAMMA}"
-
-# CUDA_VISIBLE_DEVICES=$DEVICE python3 main_train_port.py --dataset $DATASET_NAME \
-#                                                         --inference_model_name $INFERENCE_MODEL_PSEUDONAME \
-#                                                         --retrieval_model_name $RETRIEVAL_MODEL_NAME \
-#                                                         --retriever_max_seq_length $RETRIEVAL_MAX_SEQ_LEN \
-#                                                         --inference_max_seq_length $INFERENCE_MAX_SEQ_LEN \
-#                                                         --n_epochs $N_EPOCHS \
-#                                                         --lr $LR \
-#                                                         --lr_type $LR_SCHEDULER \
-#                                                         --train_batch_size $TRAIN_BATCH_SIZE \
-#                                                         --eval_batch_size $EVAL_BATCH_SIZE \
-#                                                         --preprocessing_batch_size $PREPROCESS_BATCH_SIZE \
-#                                                         --padding_side $PADDING_SIDE \
-#                                                         --lambda_loss $LAMBDA_WEIGHT \
-#                                                         --n_neg_examples $N_NEGS \
-#                                                         --k_eval $K_ACC_UPPER \
-#                                                         --gamma $GAMMA \
-#                                                         --beta $BETA \
-#                                                         --seed $SEED \
-#                                                         --wandb_project_name $WANDB_PROJECT_NAME \
-#                                                         --wandb_run_name $WANDB_RUN_NAME \
-#                                                         --log_freq $LOG_FREQ \
-#                                                         --do_train \
-#                                                         --do_eval \
-#                                                         --eval_strategy "steps" \
-#                                                         --eval_steps 500\
-#                                                         --load_in_4bit \
-#                                                         #--max_train_samples $MAX_TRAIN_SAMPLES \
-#                                                         #--max_eval_samples $MAX_EVAL_SAMPLES
-
-
-# DATASET_NAME="toole"
-# RETRIEVAL_MODEL_NAME="FacebookAI/roberta-base"
-# WANDB_RUN_NAME="${DATASET_NAME}-${RETRIEVAL_MODEL_NAME}-${INFERENCE_MODEL_PSEUDONAME}-B${BETA}-G${GAMMA}"
-
-# CUDA_VISIBLE_DEVICES=$DEVICE python3 main_train_port.py --dataset $DATASET_NAME \
-#                                                         --inference_model_name $INFERENCE_MODEL_PSEUDONAME \
-#                                                         --retrieval_model_name $RETRIEVAL_MODEL_NAME \
-#                                                         --retriever_max_seq_length $RETRIEVAL_MAX_SEQ_LEN \
-#                                                         --inference_max_seq_length $INFERENCE_MAX_SEQ_LEN \
-#                                                         --n_epochs $N_EPOCHS \
-#                                                         --lr $LR \
-#                                                         --lr_type $LR_SCHEDULER \
-#                                                         --train_batch_size $TRAIN_BATCH_SIZE \
-#                                                         --eval_batch_size $EVAL_BATCH_SIZE \
-#                                                         --preprocessing_batch_size $PREPROCESS_BATCH_SIZE \
-#                                                         --padding_side $PADDING_SIDE \
-#                                                         --lambda_loss $LAMBDA_WEIGHT \
-#                                                         --n_neg_examples $N_NEGS \
-#                                                         --k_eval $K_ACC_UPPER \
-#                                                         --gamma $GAMMA \
-#                                                         --beta $BETA \
-#                                                         --seed $SEED \
-#                                                         --wandb_project_name $WANDB_PROJECT_NAME \
-#                                                         --wandb_run_name $WANDB_RUN_NAME \
-#                                                         --log_freq $LOG_FREQ \
-#                                                         --do_train \
-#                                                         --do_eval \
-#                                                         --eval_strategy "steps" \
-#                                                         --eval_steps 500\
-#                                                         --load_in_4bit \
-#                                                         #--max_train_samples $MAX_TRAIN_SAMPLES \
-#                                                         #--max_eval_samples $MAX_EVAL_SAMPLES
-
-
-
-# DATASET_NAME="toole-overlap"
-# RETRIEVAL_MODEL_NAME="BAAI/bge-base-en-v1.5"
-# WANDB_RUN_NAME="${DATASET_NAME}-${RETRIEVAL_MODEL_NAME}-${INFERENCE_MODEL_PSEUDONAME}-B${BETA}-G${GAMMA}"
-
-# CUDA_VISIBLE_DEVICES=$DEVICE python3 main_train_port.py --dataset $DATASET_NAME \
-#                                                         --inference_model_name $INFERENCE_MODEL_PSEUDONAME \
-#                                                         --retrieval_model_name $RETRIEVAL_MODEL_NAME \
-#                                                         --retriever_max_seq_length $RETRIEVAL_MAX_SEQ_LEN \
-#                                                         --inference_max_seq_length $INFERENCE_MAX_SEQ_LEN \
-#                                                         --n_epochs $N_EPOCHS \
-#                                                         --lr $LR \
-#                                                         --lr_type $LR_SCHEDULER \
-#                                                         --train_batch_size $TRAIN_BATCH_SIZE \
-#                                                         --eval_batch_size $EVAL_BATCH_SIZE \
-#                                                         --preprocessing_batch_size $PREPROCESS_BATCH_SIZE \
-#                                                         --padding_side $PADDING_SIDE \
-#                                                         --lambda_loss $LAMBDA_WEIGHT \
-#                                                         --n_neg_examples $N_NEGS \
-#                                                         --k_eval $K_ACC_UPPER \
-#                                                         --gamma $GAMMA \
-#                                                         --beta $BETA \
-#                                                         --seed $SEED \
-#                                                         --wandb_project_name $WANDB_PROJECT_NAME \
-#                                                         --wandb_run_name $WANDB_RUN_NAME \
-#                                                         --log_freq $LOG_FREQ \
-#                                                         --do_train \
-#                                                         --do_eval \
-#                                                         --eval_strategy "steps" \
-#                                                         --eval_steps 500\
-#                                                         --load_in_4bit \
-#                                                         #--max_train_samples $MAX_TRAIN_SAMPLES \
-#                                                         #--max_eval_samples $MAX_EVAL_SAMPLES
-

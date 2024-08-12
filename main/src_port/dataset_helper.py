@@ -11,71 +11,176 @@ from torch.utils.data import DataLoader, Dataset
 
 from torch.nn.functional import cosine_similarity
 
-from src_port.utils import compute_embeddings
-
+from tqdm import tqdm
 import torch
 import torch.nn.functional as F
 
-def create_triplets_with_similar_negatives(dataset, 
-                                          retr_model, 
-                                          tokenizer, 
-                                          num_negatives_per_positive=1, 
-                                          retrieval_max_length=512, 
-                                          split='train', device="cuda"):
+
+def embed_corpus(retr_model, 
+                 retr_tokenizer,
+                 corpus, 
+                 device, 
+                 batch_size=32, 
+                 max_length=1024):
+    """
+    Create embedding matrix for a corpus of documents.
+    """
+    retr_model.eval()
+    all_embeddings = []
+
+    with torch.no_grad():
+        for i in tqdm(range(0, len(corpus), batch_size), desc="Embedding corpus"):
+            batch = corpus[i:i+batch_size]
+            batch = retr_tokenizer(batch, padding="max_length", truncation=True, max_length=max_length, return_tensors="pt")
+            batch = {k:batch[k].to(device) for k in batch}
+
+            out = retr_model(**batch)
+
+            embeddings = F.normalize(out[0][:, 0], p=2, dim=1)
+            if len(embeddings.shape) > 2:
+                embeddings = embeddings.squeeze(0)
+            all_embeddings.append(embeddings.cpu())
+
+    return torch.cat(all_embeddings, dim=0)
+
+def compute_embeddings(model, documents, device="cuda"):
+    """
+    Compute the embedding of input documents using the given encoder model.
+    """
+    documents = {k: v.to(device) for k, v in documents.items()}
+    with torch.no_grad():
+        model_output = model(**documents)
+    sentence_embeddings = model_output[0][:, 0]
+    sentence_embeddings_normal = F.normalize(sentence_embeddings, p=2, dim=1)
+
+    del sentence_embeddings
+    torch.cuda.empty_cache()
+
+    return sentence_embeddings_normal
+
+def create_triplets_with_similar_negatives(dataset, retr_model, tokenizer, num_negatives_per_positive=1, retrieval_max_length=512, split='train', device="cuda", preprocessing_batch_size=32):
     triplets = []
     questions = dataset[split]["query_for_retrieval"]
     augmented_descriptions = dataset[split]["api_description"]
     answers = dataset[split]["answer"]
 
-    # Pre-compute all document embeddings
-    doc_encodings = tokenizer(augmented_descriptions, truncation=True, max_length=retrieval_max_length, padding='max_length', return_tensors='pt')
-    doc_embeddings = compute_embeddings(retr_model, doc_encodings, device)
+    batch_size=preprocessing_batch_size
 
-    for i in range(len(questions)):
-        query = questions[i]
-        positive = augmented_descriptions[i]
+    doc_embeddings = embed_corpus(retr_model, 
+                                tokenizer,
+                                augmented_descriptions, 
+                                device, 
+                                batch_size=batch_size, 
+                                max_length=retrieval_max_length)
+    doc_embeddings = doc_embeddings.to(device)
 
-        # Compute query embedding
-        query_encoding = tokenizer([query], truncation=True, max_length=retrieval_max_length, padding='max_length', return_tensors='pt')
-        query_embedding = compute_embeddings(retr_model, query_encoding, device)
-
-        # Compute similarities
-        similarities = F.cosine_similarity(query_embedding, doc_embeddings)
+    # Process queries in batches
+    for i in tqdm(range(0, len(questions), batch_size), desc="Processing queries"):
+        batch_questions = questions[i:i+batch_size]
         
-        # Get top k+1 similar indices to ensure we have enough after potential removal of positive
-        top_k = num_negatives_per_positive + 1
-        similar_indices = similarities.argsort(descending=True)[:top_k+1].squeeze().tolist()
+        # Compute query embeddings for the batch
+        query_encodings = tokenizer(batch_questions, truncation=True, max_length=retrieval_max_length, padding='max_length', return_tensors='pt')
+        query_embeddings = compute_embeddings(retr_model, query_encodings, device)
+        query_embeddings = query_embeddings.to(device)
 
-        # Check if positive is in top k and handle accordingly
-        if i in similar_indices[:top_k]:
-            # If positive is in top k, remove it and use the next most similar
-            similar_indices.remove(i)
-            negative_indices = similar_indices[:num_negatives_per_positive]
-        else:
-            # If positive is not in top k, use the top k as negatives
-            negative_indices = [idx for idx in similar_indices[:top_k] if idx != i]
+        # Compute similarities for the batch
+        similarities = F.cosine_similarity(query_embeddings.unsqueeze(1), doc_embeddings.unsqueeze(0), dim=2)
 
-        assert len(negative_indices) == num_negatives_per_positive
+        for j, similarity in enumerate(similarities):
+            idx = i + j
+            query = questions[idx]
+            positive = augmented_descriptions[idx]
 
-        triplets.append({
-            'query': query,
-            'positive': positive,
-            'negative': [augmented_descriptions[idx] for idx in negative_indices],
-            'pos_answer': answers[i],
-            'neg_answer': [answers[idx] for idx in negative_indices]
-        })
+            # Get top k+1 similar indices
+            top_k = num_negatives_per_positive + 1
+            similar_indices = similarity.argsort(descending=True)[:top_k].tolist()
+
+            # Check if positive is in top k and handle accordingly
+            if idx in similar_indices:
+                similar_indices.remove(idx)
+                negative_indices = similar_indices#[:num_negatives_per_positive]
+            else:
+                negative_indices = similar_indices[:num_negatives_per_positive]#[idx for idx in similar_indices[:top_k] if idx != idx]
+
+            assert len(negative_indices) == num_negatives_per_positive
+
+            triplets.append({
+                'query': query,
+                'positive': positive,
+                'negative': [augmented_descriptions[idx] for idx in negative_indices],
+                'pos_answer': answers[idx],
+                'neg_answer': [answers[idx] for idx in negative_indices]
+            })
+        del query_embeddings
+        torch.cuda.empty_cache()
+
+    del similarities, doc_embeddings
+    torch.cuda.empty_cache()
 
     return triplets
+
+# def create_triplets_with_similar_negatives(dataset, 
+#                                           retr_model, 
+#                                           tokenizer, 
+#                                           num_negatives_per_positive=1, 
+#                                           retrieval_max_length=512, 
+#                                           split='train', device="cuda"):
+#     triplets = []
+#     questions = dataset[split]["query_for_retrieval"]
+#     augmented_descriptions = dataset[split]["api_description"]
+#     answers = dataset[split]["answer"]
+
+#     # Pre-compute all document embeddings
+#     doc_encodings = tokenizer(augmented_descriptions, truncation=True, max_length=retrieval_max_length, padding='max_length', return_tensors='pt')
+#     doc_embeddings = compute_embeddings(retr_model, doc_encodings, device)
+
+#     for i in range(len(questions)):
+#         query = questions[i]
+#         positive = augmented_descriptions[i]
+
+#         # Compute query embedding
+#         query_encoding = tokenizer([query], truncation=True, max_length=retrieval_max_length, padding='max_length', return_tensors='pt')
+#         query_embedding = compute_embeddings(retr_model, query_encoding, device)
+
+#         # Compute similarities
+#         similarities = F.cosine_similarity(query_embedding, doc_embeddings)
+        
+#         # Get top k+1 similar indices to ensure we have enough after potential removal of positive
+#         top_k = num_negatives_per_positive + 1
+#         similar_indices = similarities.argsort(descending=True)[:top_k+1].squeeze().tolist()
+
+#         # Check if positive is in top k and handle accordingly
+#         if i in similar_indices[:top_k]:
+#             # If positive is in top k, remove it and use the next most similar
+#             similar_indices.remove(i)
+#             negative_indices = similar_indices[:num_negatives_per_positive]
+#         else:
+#             # If positive is not in top k, use the top k as negatives
+#             negative_indices = [idx for idx in similar_indices[:top_k] if idx != i]
+
+#         assert len(negative_indices) == num_negatives_per_positive
+
+#         triplets.append({
+#             'query': query,
+#             'positive': positive,
+#             'negative': [augmented_descriptions[idx] for idx in negative_indices],
+#             'pos_answer': answers[i],
+#             'neg_answer': [answers[idx] for idx in negative_indices]
+#         })
+
+#     return triplets
 
 
 
 class DatasetDownloader():
 
     def __init__(self,
-                 dataset_name : str = "octopus"):
+                 dataset_name : str = "octopus",
+                 seed : int = 42):
 
         self.dataset_name = dataset_name
         self.data_sub_split = "parsed_data"
+        self.seed = seed
         
         base_ds_path = "ToolRetriever"
         dataset_mapping = {
@@ -96,7 +201,16 @@ class DatasetDownloader():
         """
         Download and return the dataset
         """
-        return load_dataset(self.data_path, self.data_sub_split)
+        ds = load_dataset(self.data_path, self.data_sub_split)
+
+        if self.dataset_name == "toolbench":
+            ds = ds.filter(lambda x : x["group"] == "G3")
+        
+        if self.dataset_name in ["toolbench", "bfcl"]:
+            unique_k = list(ds.keys())[0]
+            ds = ds[unique_k].train_test_split(test_size=0.3, seed=self.seed)
+
+        return ds
     
     def post_process_answers(self,
                              dataset):
@@ -127,9 +241,11 @@ def get_prompted_q_doc(prompt_template : str,
     Define prompts to pass to the inference model
     """
 
+    MAX_FUN_CHARS = 500
+
     prompt_fields = {
         "instruction" : instruction_prompt,
-        "api_def" : document,
+        "api_def" : document[:MAX_FUN_CHARS],
         "query" : query,
         "answer" : answer
     }
@@ -365,7 +481,8 @@ def get_train_dataloader(dataset,
                          generateor_max_length : int = 1024,
                          batch_size : int = 2,
                          epoch_number : int = 0,
-                         num_neg_examples : int = 2) -> torch.utils.data.DataLoader:
+                         num_neg_examples : int = 2,
+                         preprocessing_batch_size : int = 8) -> torch.utils.data.DataLoader:
     """
     Create triplets and return train dataloader
     """
@@ -379,7 +496,8 @@ def get_train_dataloader(dataset,
                                                       retrieval_tokenizer,
                                                       retrieval_max_length=retrieval_max_length, 
                                                       num_negatives_per_positive=num_neg_examples,
-                                                      split='train')
+                                                      split='train',
+                                                      preprocessing_batch_size=preprocessing_batch_size)
 
     # with open("/call-me-replug/main/src_port/out/out_results.jsonl", "w") as f_out:
     #     for tr in triplets:
@@ -397,7 +515,7 @@ def get_train_dataloader(dataset,
 
     triplet_dataloader = DataLoader(triplet_dataset,
                                 batch_size=batch_size,
-                                shuffle=False,
+                                shuffle=True,
                                 collate_fn=train_collator)
                                     
     return triplet_dataloader

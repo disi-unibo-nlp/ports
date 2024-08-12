@@ -18,6 +18,14 @@ add_reminder('Buy groceries', 'tomorrow', '2 PM')
 Here is the API definition of the function you must use to fulfill the user's request:
 """
 
+
+# INSTRUCTION="""Given a list of functions with their documentation, call the correct function
+# with the correct parameters in the form function_name(parameter 1, parameter 2).
+# Do not add any other text apart from the function call.
+# Example: Can you add a note saying 'Rembember the milk'? Response: add_note('Remember the milk').
+# Here is the documentation of all the functions.
+# """
+
 TOOL_LLAMA_GROQ_PROMPT = """
 You are a function calling AI model. You are provided with a function signature within <tools></tools> XML tags. Your task is to call the given function to assist with the user query. Don't make assumptions about what values to plug into functions. Only return the function call with a standard format FUNCTION_NAME(ARGS).
 
