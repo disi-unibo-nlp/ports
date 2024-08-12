@@ -16,3 +16,6 @@ wandb sweep --stop entity/project/sweep_ID
 
 # get gpu usages
 scontrol show job -d | grep "IDX\|UserId"
+
+# get user that started process
+ps -o user= -p PID
