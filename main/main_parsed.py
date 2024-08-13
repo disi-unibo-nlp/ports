@@ -150,8 +150,25 @@ def main():
         dataset = dataset['train'].train_test_split(test_size=0.3, seed=42)
     elif args.dataset_path == "ToolRetriever/BFCL":
         dataset = dataset['test'].train_test_split(test_size=0.3, seed=42)
-    if 'Octopus' not in args.dataset_path and args.dataset_path != "ToolRetriever/BFCL":
-        dataset['train'] = dataset['train'].train_test_split(test_size=0.8, seed=42)['train']
+    elif args.dataset_path == "ToolRetriever/APIBench":
+        ds_dict = {}
+        for split in dataset:
+            for row in dataset[split]:
+                answ = row["answer"]
+                descr = row["api_description"]
+
+                if answ not in ds_dict: ds_dict[answ] = descr
+
+        def unique_descr(example):
+            out = example
+            out["api_description"] = ds_dict[example["answer"]]
+            return out
+
+        dataset = dataset.map(unique_descr)
+
+    # sampling
+    if 'Octopus' not in args.dataset_path:
+        dataset['train'] = dataset['train'].train_test_split(train_size=600, seed=42)['train']
     dataset = dataset.shuffle(seed=42).flatten_indices()
 
     query_column = args.query_column
