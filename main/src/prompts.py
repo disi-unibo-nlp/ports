@@ -27,7 +27,17 @@ PROMPT_TEMPLATES = {
             f'{RESPONSE}</s>'
         ),
         'answer_template' : '[/INST]'
+    },
+
+    'llama3groq' : {
+         'prompt_template' : (
+            f'<|start_header_id|>system<|end_header_id|>{INSTRUCTION}\n<tools>{RETRIEVED_TEXT}</tools>'
+            f'<|eot_id|><|start_header_id|>user<|end_header_id|>{QUERY}'
+            f'<|eot_id|><|start_header_id|>assistant<|end_header_id|>{RESPONSE}<|eot_id|>'
+        ),
+        'answer_template' : '<|start_header_id|>assistant<|end_header_id|>'
     }
+
 }
 
 INSTRUCTIONS = {
@@ -47,13 +57,9 @@ INSTRUCTIONS = {
         "Do not add any other text apart from the function call.\n"
         "Example: Can you add a note saying 'Rembember the milk'? Response: add_note('Remember the milk'). "
         "Here is the documentation of all the functions."
+    ),
+    'function_calling_groq' : (
+        "You are a function calling AI model. You are provided with a function signature within <tools></tools> XML tags. Your task is to call the given function to assist with the user query. Don't make assumptions about what values to plug into functions. Only return the function call with a standard format FUNCTION_NAME(ARGS).\n\nHere are the available tool:"
     )
-    # 'function_calling' : (
-    #     "You are a helpful AI assistant. Your current task is to call the correct function based on the user's query. "
-    #     "Given a list of functions with their documentation, call the correct function "
-    #     "with the correct parameters in the form function_name(parameter 1, parameter 2). "
-    #     "Do not add any other text apart from the function call.\n"
-    #     "Example: Can you add a note saying 'Rembember the milk'? Response: add_note('Remember the milk'). "
-    #     "List of functions:"
-    # )
+    
 }

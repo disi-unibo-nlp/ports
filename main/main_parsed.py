@@ -123,7 +123,7 @@ def main():
     retr_model.eval()
     infer_model.eval()
 
-    def compute_embeddings(corpus, batch_size=32):
+    def compute_embeddings(corpus, batch_size=16):
         all_embeddings = []
         # max_length = retr_tokenizer.model_max_length
         for i in range(0, len(corpus), batch_size):
@@ -139,16 +139,21 @@ def main():
         return stacked_embeddings
 
     # data preparation
-    INSTRUCTION = INSTRUCTIONS[args.dataset_type]
     infer_model_type = args.infer_model_type
+    INSTRUCTION = INSTRUCTIONS["function_calling_groq" if infer_model_type == 'llama3groq' else args.dataset_type]
     prompt_template = PROMPT_TEMPLATES[infer_model_type]["prompt_template"]
     ANSWER = PROMPT_TEMPLATES[infer_model_type]["answer_template"]
     
     dataset = load_dataset(args.dataset_path, "parsed_data")
     if args.dataset_path == "ToolRetriever/ToolBench":
-        dataset = dataset['train'].filter(lambda x: x['group'] == 'G3')
+        dataset['train'] = dataset['train'].filter(lambda x: x['group'] == 'G3' and bool(x['api_description'].strip()))
         dataset = dataset['train'].train_test_split(test_size=0.3, seed=42)
+    elif args.dataset_path == "ToolRetriever/BFCL":
+        dataset = dataset['test'].train_test_split(test_size=0.3, seed=42)
+    if 'Octopus' not in args.dataset_path and args.dataset_path != "ToolRetriever/BFCL":
+        dataset['train'] = dataset['train'].train_test_split(test_size=0.8, seed=42)['train']
     dataset = dataset.shuffle(seed=42).flatten_indices()
+
     query_column = args.query_column
     response_column = args.response_column
     train_documents = list(set(dataset["train"]["api_description"]))
@@ -307,16 +312,16 @@ def main():
         return loss
 
     # evaluation utility functions
-    verify_relevancy = lambda response, doc: response.split('(')[0] in doc
+    verify_relevancy = lambda api, doc: api == doc
 
     def get_relevant_docs(batch_data, documents):
         """
         For each example in the batch, retrieve its relevant document
         """        
         rel_docs = []
-        for response in batch_data[response_column]:
+        for api in batch_data["api_description"]:
             for i, doc in enumerate(documents):
-                if verify_relevancy(response, doc):
+                if verify_relevancy(api, doc):
                     rel_docs.append(i)
                     break
         return torch.tensor(rel_docs).unsqueeze(-1)
@@ -341,7 +346,7 @@ def main():
         """
         for ex_index in range(curr_bs):
             true_relevance = np.array([
-                verify_relevancy(batch_data[response_column][ex_index], doc)
+                verify_relevancy(batch_data["api_description"][ex_index], doc)
                 for doc in (eval_documents if args.eval_docs_path else train_documents)
             ])
             for i, k_val in enumerate(ndcg_k_values):
@@ -362,42 +367,18 @@ def main():
                 documents_per_query, similarities_per_query, cos_sim = get_top_k_docs_per_query(embedded_documents, batch_data, k)
                 accumulate_ranks_at_n(ranks, documents_per_query, eval_documents if args.eval_docs_path else train_documents, batch_data, k, index)
                 accumulate_ndcg_scores(ndcg_scores, ndcg_k_values, batch_data, curr_bs, cos_sim)
-                # Pr = compute_Pr(similarities_per_query, gamma)
-                # del similarities_per_query
-                # # 3.
-                # prompts = get_prompts(prompt_template, eval_documents if args.eval_docs_path else train_documents, batch_data, documents_per_query)
-                # # 4.
-                # inner_data_loader = prepare_inner_data_loader(prompts, curr_bs, inner_tokenize_function, inner_data_collator)
-                # # 5., 6. and 7.
-                # perplexities = []
-                # for inner_index, inner_batch in enumerate(inner_data_loader):
-                #     inner_batch = {k: v.to("cuda") for k, v in inner_batch.items()}
-                #     labels = inner_batch.pop("labels")
-                #     with torch.no_grad():
-                #         outputs = infer_model(**inner_batch)
-                #     perplexity = get_perplexity_per_sample(outputs, labels, cross_entropy, index, inner_index, inner_batch["input_ids"])
-                #     perplexities.append(perplexity)
-                #     del outputs, perplexity
-                #     torch.cuda.empty_cache()
-                # # 8.
-                # Q = compute_Q(perplexities, beta)
-                # # 9.
-                # loss = compute_loss(Q, Pr, kl_div)
-                # assert not torch.isnan(loss), "Loss is NaN"
-                # assert loss < 1e6, f"Loss is too large: {loss}"
-                # del perplexities, Q, Pr, inner_data_loader, inner_batch
                 torch.cuda.empty_cache()
-                # if log_wandb:
-                #     wandb.log({"Evaluation Loss": loss.item()})
-                # if verbose:
-                #     logger.info(f"EVALUATION LOSS: {loss}")
             ranks = [r / len(eval_data_loader.dataset) * 100 for r in ranks]
+            rank_avg = sum(ranks[:3]) / 3
             for n in range(k):
                 if verbose:
                     logger.info(f"RANK@{n+1}: {ranks[n]}")
                 if log_wandb:
-                    wandb.log({f"Rank@{n+1}": ranks[n] for n in range(k)})
-                    wandb.log({"RankAvg": sum(ranks[:3]) / 3})    
+                    wandb.log({f"Rank@{n+1}": ranks[n]})
+            if verbose:
+                logger.info(f"RANKAVG: {rank_avg}")
+            if log_wandb:
+                wandb.log({"RankAvg": rank_avg})  
 
             for i, k_val in enumerate(ndcg_k_values):
                 ndcg_score_avg = sum(ndcg_scores[i]) / len(eval_data_loader.dataset)
@@ -477,7 +458,6 @@ def main():
     if log_wandb:
         wandb.finish()
     if args.trained_model_save_path:
-        # torch.save(retr_model.state_dict(), args.trained_model_save_path)
         retr_model.save_pretrained(args.trained_model_save_path)
 
 if __name__ == "__main__":

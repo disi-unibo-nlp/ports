@@ -14,6 +14,8 @@ while [ "$(docker ps -aq -f name=${CONTAINER_NAME})" ]; do
     CONTAINER_NAME="proj${n}"
 done
 
+CUDA_VISIBLE_DEVICES=3
+
 # start rag-func-call container
 docker run --name $CONTAINER_NAME \
            -v /home/monaldini/rag-function-calling/main:/proj/main \
@@ -21,6 +23,6 @@ docker run --name $CONTAINER_NAME \
            --gpus '"device='"$CUDA_VISIBLE_DEVICES"'"' \
            -e HF_KEY=$HF_KEY \
            -e WANDB_KEY=$WANDB_KEY \
-           rag-func-call $COMMAND
-        #    -it rag-func-call $COMMAND
+           -it rag-func-call $COMMAND
+        #    rag-func-call $COMMAND
         #    -p 7860:7860 \
