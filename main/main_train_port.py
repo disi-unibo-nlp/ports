@@ -124,12 +124,14 @@ def evaluate(retr_model,
 
     with torch.no_grad():
         for bid, batch in tqdm(enumerate(eval_dataloader), total=len(eval_dataloader)):
+        
             queries = batch["query"]
             bs = queries["input_ids"].shape[0]
 
 
             gold_ids = []
-            for _i, i in enumerate(range(bid*bs,bid*bs+bs)):
+            #for _i, i in enumerate(range(bid*bs,bid*bs+bs)):
+            for _i, i in enumerate(range(bid*eval_dataloader.batch_size, min((bid+1)*eval_dataloader.batch_size, num_samples))):
                 pos = eval_triplets[i]["positive"]
                 idx = api_corpus.index(pos)
                 gold_ids.append(idx)
@@ -139,17 +141,19 @@ def evaluate(retr_model,
             query_embeddings = encode_query(retr_model, queries, device)
 
             # Compute similarities with the entire corpus
-            all_similarities = torch.matmul(query_embeddings, corpus_embeddings.T)  # [bs, num_docs]
-            all_similarities = all_similarities.squeeze(0).view(bs,-1)
-
+            embedded_documents_exp = corpus_embeddings.unsqueeze(0)
+            embedded_queries_exp = query_embeddings.view(bs,1,-1)
+            all_similarities = F.cosine_similarity(embedded_documents_exp,embedded_queries_exp, dim=-1)
+            
             # Compute ranks
-            _, indices = all_similarities.topk(k, dim=-1, largest=True)
+            top_k_docs= all_similarities.topk(k, dim=-1, largest=True)
+            indices, values = top_k_docs.indices, top_k_docs.values
+
 
             indices = indices.view(bs,-1)
             gold_ids = torch.tensor(gold_ids).view(1,-1).to(device)
 
             for _k in range(k):
-              #rank_at_n = torch.any(indices[:, :_k+1] == gold_ids.unsqueeze(0).T, dim=-1).sum()
               rank_at_n = torch.any(indices[:, :_k+1] == gold_ids.view(bs,-1), dim=-1).sum()
               ranks[_k] += rank_at_n.item()
             
@@ -157,6 +161,9 @@ def evaluate(retr_model,
             this_ndcg_scores = get_ndcg_scores(ndcg_k_values, batch, gold_ids.squeeze(0), all_similarities, api_corpus, [eval_triplets[i] for i in range(bid*bs, bid*bs+bs)])
             for i, _ in enumerate(this_ndcg_scores):
                 ndcg_scores[i] += this_ndcg_scores[i]
+
+            for i, scores in enumerate(this_ndcg_scores):
+                ndcg_scores[i].extend(scores)
 
     # Normalize ranks
     ranks = [round(r / num_samples * 100, 3) for r in ranks]

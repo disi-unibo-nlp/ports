@@ -31,12 +31,13 @@ def embed_corpus(retr_model,
     with torch.no_grad():
         for i in tqdm(range(0, len(corpus), batch_size), desc="Embedding corpus"):
             batch = corpus[i:i+batch_size]
-            batch = retr_tokenizer(batch, padding="max_length", truncation=True, max_length=max_length, return_tensors="pt")
+            #batch = retr_tokenizer(batch, padding="max_length", truncation=True, max_length=max_length, return_tensors="pt")
+            batch = retr_tokenizer(batch, padding=True, truncation=True, return_tensors="pt")
             batch = {k:batch[k].to(device) for k in batch}
 
             out = retr_model(**batch)
 
-            embeddings = F.normalize(out[0][:, 0], p=2, dim=1)
+            embeddings = F.normalize(out[0][:, 0], p=2, dim=-1)
             if len(embeddings.shape) > 2:
                 embeddings = embeddings.squeeze(0)
             all_embeddings.append(embeddings.cpu())
@@ -51,7 +52,7 @@ def compute_embeddings(model, documents, device="cuda"):
     with torch.no_grad():
         model_output = model(**documents)
     sentence_embeddings = model_output[0][:, 0]
-    sentence_embeddings_normal = F.normalize(sentence_embeddings, p=2, dim=1)
+    sentence_embeddings_normal = F.normalize(sentence_embeddings, p=2, dim=-1)
 
     del sentence_embeddings
     torch.cuda.empty_cache()
@@ -443,8 +444,10 @@ class EvalTripletCollator(DataCollatorMixin):
         pos_answers = [item['pos_answer'] for item in batch]
 
         # Queries, Pos, Neg docs
-        query_encodings = self.retr_tokenizer(queries, truncation=True, max_length=self.max_length_retr, padding='max_length', return_tensors='pt')
-        positive_encodings = self.retr_tokenizer(positives, truncation=True, max_length=self.max_length_retr, padding='max_length', return_tensors='pt')
+        # query_encodings = self.retr_tokenizer(queries, truncation=True, max_length=self.max_length_retr, padding='max_length', return_tensors='pt')
+        # positive_encodings = self.retr_tokenizer(positives, truncation=True, max_length=self.max_length_retr, padding='max_length', return_tensors='pt')
+        query_encodings = self.retr_tokenizer(queries, truncation=True, padding=True, return_tensors='pt')
+        positive_encodings = self.retr_tokenizer(positives, truncation=True, padding=True, return_tensors='pt')
 
         # Remove token_type_ids
         for encoding in [query_encodings,
@@ -515,8 +518,9 @@ def get_train_dataloader(dataset,
 
     triplet_dataloader = DataLoader(triplet_dataset,
                                 batch_size=batch_size,
-                                shuffle=True,
-                                collate_fn=train_collator)
+                                shuffle=Train,
+                                collate_fn=train_collator,
+                                drop_last=False)
                                     
     return triplet_dataloader
 
@@ -537,7 +541,8 @@ def get_eval_dataloader(dataset,
     eval_dataloader = DataLoader(eval_triplet_dataset,
                                 batch_size=batch_size,
                                 shuffle=False,
-                                collate_fn=eval_collator)
+                                collate_fn=eval_collator,
+                                drop_last=False)
     
     
     return eval_dataloader, eval_triplet_dataset

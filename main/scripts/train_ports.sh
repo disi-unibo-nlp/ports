@@ -56,10 +56,11 @@ RETRIEVAL_MODEL_NAME="BAAI/bge-base-en-v1.5"
 
 MAX_TRAIN_SAMPLES=300
 
-DATASETS=("octopus" "octopus-overlap" "toole-overlap" "apibank" "apibench" "toolbench" "bfcl")
+DATASETS=("octopus" "octopus-overlap" "toole-overlap" "toole" "apibank" "apibench" "toolbench" "bfcl")
 DATASET_NAME="toolbench"
 
 # for RETRIEVAL_MODEL_NAME in ${RETR_MODELS[@]}; do
+
 
 WANDB_RUN_NAME="${DATASET_NAME}-${RETRIEVAL_MODEL_NAME}-${INFERENCE_MODEL_PSEUDONAME}-B${BETA}-G${GAMMA}-ORPOB${PREF_BETA}-LR${LR}"
 

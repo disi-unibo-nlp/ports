@@ -11,55 +11,28 @@ from sklearn.metrics import ndcg_score
 
 import numpy as np
 
-def get_ndcg_scores(ndcg_k_values, 
-                    batch_data, 
-                    gold_ids,
-                    similarities,
-                    api_corpus = None,
-                    eval_triplets = None):
-    """
-    Compute the NDCG scores for the batch, sum them up to the previous batches' values
-    """
+def get_ndcg_scores(ndcg_k_values, batch_data, gold_ids, similarities, api_corpus=None, eval_triplets=None):
     len_corpus = similarities.shape[-1]
     ndcg_scores = [[] for _ in range(len(ndcg_k_values))]
-
     n_data = batch_data["query"]["input_ids"].shape[0]
 
-
     for ex_index in range(n_data):
-
         true_relevance = np.zeros(len_corpus)
         pos_idx = gold_ids[ex_index].cpu().item()
         true_relevance[pos_idx] = 1
 
         scores = similarities[ex_index].cpu().numpy()
 
-        # print("-"*10)
-        # print(pos_idx)
-        # print(scores)
-        # print("-"*10)
-
-        # print("-"*100)
-        # print(f'QUERY:" {eval_triplets[ex_index]["query"]}')
-        # print(f'POS:" {eval_triplets[ex_index]["positive"]}')
-        # print(f'SIMILARITY: {scores[pos_idx]}')
-        # if (max_sim := scores.argmax()) != pos_idx:
-        #     print("*"*50)
-        #     print(f"MAX SIM: {scores[pos_idx]}")
-        #     print(api_corpus[max_sim])
-        # print("-"*100)
-
         for k_index, k_val in enumerate(ndcg_k_values):
             ndcg_scores[k_index].append(
                 ndcg_score(
                     [true_relevance],
                     [scores],
-                    k=k_val # consider only the highest k scores
+                    k=min(k_val, len_corpus)  # Ensure k is not larger than corpus size
                 )
             )
-            #print(f"k_val ---> {ndcg_scores[k_index][-1]}")
 
-    return ndcg_scores
+    return ndcg_scores  # Return a list of lists, not averaging here
 
 
 
@@ -78,7 +51,7 @@ def compute_embeddings(model,
     # Perform pooling. In this case, cls pooling.
     sentence_embeddings = model_output[0][:, 0]
     # normalize embeddings
-    sentence_embeddings_normal = F.normalize(sentence_embeddings, p=2, dim=1)
+    sentence_embeddings_normal = F.normalize(sentence_embeddings, p=2, dim=-1)
     del documents, model_output, sentence_embeddings
     return sentence_embeddings_normal
 
@@ -100,8 +73,8 @@ def compute_similarity(model,
     }
 
     # CLS pooling + normalization
-    docs_embeddings = F.normalize(model(**documents_tok)[0][:, 0], p=2, dim=1).unsqueeze(0)
-    q_embeddings = F.normalize(model(**queries_tok)[0][:, 0], p=2, dim=1).unsqueeze(0)
+    docs_embeddings = F.normalize(model(**documents_tok)[0][:, 0], p=2, dim=-1).unsqueeze(0)
+    q_embeddings = F.normalize(model(**queries_tok)[0][:, 0], p=2, dim=-1).unsqueeze(0)
 
     del documents_tok, queries_tok
 
@@ -132,7 +105,7 @@ def encode_query(retr_model,
     enc = retr_model(**query)[0]
     #print(f"ENC SHAPE: {enc.shape}")
 
-    return F.normalize(enc[:, 0], p=2, dim=1).unsqueeze(0)
+    return F.normalize(enc[:, 0], p=2, dim=-1).unsqueeze(0)
 
 
 def embed_corpus(retr_model, 
@@ -155,7 +128,7 @@ def embed_corpus(retr_model,
 
             out = retr_model(**batch)
 
-            embeddings = F.normalize(out[0][:, 0], p=2, dim=1)
+            embeddings = F.normalize(out[0][:, 0], p=2, dim=-1)
             if len(embeddings.shape) > 2:
                 embeddings = embeddings.squeeze(0)
             all_embeddings.append(embeddings.cpu())
