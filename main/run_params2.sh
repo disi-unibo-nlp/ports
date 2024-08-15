@@ -21,16 +21,14 @@ TOOLBENCH="ToolRetriever/ToolBench"
 
 
 quintuplets=(
-    "[PAPER]_ToolBench_bge_llama3 $TOOLBENCH $BGE $LLAMA $LLAMA_TYPE"
-    "[PAPER]_ToolBench_roberta_llama3 $TOOLBENCH $ROBERTA $LLAMA $LLAMA_TYPE"
-    "[PAPER]_ToolBench_bge_llama3groq $TOOLBENCH $BGE $LLAMA_GROQ $LLAMA_GROQ_TYPE"
-    "[PAPER]_ToolBench_roberta_llama3groq $TOOLBENCH $ROBERTA $LLAMA_GROQ $LLAMA_GROQ_TYPE"
-    "[PAPER]_ToolBench_roberta_codestral $TOOLBENCH $ROBERTA $CODESTRAL $CODESTRAL_TYPE"
-    "[PAPER]_APIBench_bge_llama3 $APIBENCH $BGE $LLAMA $LLAMA_TYPE"
-    "[PAPER]_APIBench_roberta_llama3 $APIBENCH $ROBERTA $LLAMA $LLAMA_TYPE"
-    "[PAPER]_APIBench_bge_llama3groq $APIBENCH $BGE $LLAMA_GROQ $LLAMA_GROQ_TYPE"
-    "[PAPER]_APIBench_roberta_llama3groq $APIBENCH $ROBERTA $LLAMA_GROQ $LLAMA_GROQ_TYPE"
-    "[PAPER]_APIBench_roberta_codestral $APIBENCH $ROBERTA $CODESTRAL $CODESTRAL_TYPE"
+    "[PAPER][REDO]_ToolEOverlapping_roberta_llama3 $TOOLEOVER $ROBERTA $LLAMA $LLAMA_TYPE"
+    "[PAPER][REDO]_ToolEOverlapping_bge_llama3 $TOOLEOVER $BGE $LLAMA $LLAMA_TYPE"
+    "[PAPER][REDO]_APIBank_roberta_llama3 $APIBANK $ROBERTA $LLAMA $LLAMA_TYPE"
+    "[PAPER][REDO]_APIBank_roberta_llama3groq $APIBANK $ROBERTA $LLAMA_GROQ $LLAMA_GROQ_TYPE"
+    "[PAPER][REDO]_APIBank_roberta_codestral $APIBANK $ROBERTA $CODESTRAL $CODESTRAL_TYPE"
+    "[PAPER][REDO]_BFCL_roberta_llama3 $BFCL $ROBERTA $LLAMA $LLAMA_TYPE"
+    "[PAPER][REDO]_BFCL_roberta_llama3groq $BFCL $ROBERTA $LLAMA_GROQ $LLAMA_GROQ_TYPE"
+    "[PAPER][REDO]_BFCL_roberta_codestral $BFCL $ROBERTA $CODESTRAL $CODESTRAL_TYPE"
 )
 
 

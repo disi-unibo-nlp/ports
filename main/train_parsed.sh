@@ -1,19 +1,19 @@
 #!/bin/bash
 
-DATASET_PATH="ToolRetriever/OctopusOverlapping"
-WANDB_PROJ_NAME="[PAPER]_OctopusOverlapping_roberta_llama3"
+DATASET_PATH="ToolRetriever/APIBench"
+WANDB_PROJ_NAME="[PAPER]_BFCL_roberta_llama3groq"
 
 RETR_MODEL_NAME_OR_PATH="FacebookAI/roberta-base"
 # RETR_MODEL_NAME_OR_PATH="/proj/mounted/models/models--BAAI--bge-base-en-v1.5/snapshots/a5beb1e3e68b9ab74eb54cfd186867f64f240e1a/"
 
-INFER_MODEL_NAME_OR_PATH="/proj/mounted/models/models--meta-llama--Meta-Llama-3-8B-Instruct/snapshots/c4a54320a52ed5f88b7a2f84496903ea4ff07b45"
-INFER_MODEL_TYPE="llama3"
+# INFER_MODEL_NAME_OR_PATH="/proj/mounted/models/models--meta-llama--Meta-Llama-3-8B-Instruct/snapshots/c4a54320a52ed5f88b7a2f84496903ea4ff07b45"
+# INFER_MODEL_TYPE="llama3"
 
 INFER_MODEL_NAME_OR_PATH="/proj/mounted/models/models--Groq--Llama-3-Groq-8B-Tool-Use/snapshots/1d0841d97fef29b98cd9737f5beccf9ea0c8f512"
 INFER_MODEL_TYPE="llama3groq"
 
-INFER_MODEL_NAME_OR_PATH="mistralai/Codestral-22B-v0.1"
-INFER_MODEL_TYPE="codestral"
+# INFER_MODEL_NAME_OR_PATH="/proj/mounted/models/models--mistralai--Codestral-22B-v0.1/snapshots/8f5fe23af91885222a1563283c87416745a5e212"
+# INFER_MODEL_TYPE="codestral"
 
 
 DOCS_PATH="null"
@@ -52,5 +52,5 @@ python3 /proj/main/main_parsed.py  --dataset_path $DATASET_PATH \
                             --modified_loss \
                             --eval_docs_path $EVAL_DOCS_PATH \
                             # --log_to_wandb \
-                            # --wandb_proj_name $WANDB_PROJ_NAME \
+                            # --wandb_proj_name $WANDB_PROJ_NAME 
                             # --trained_model_save_path $TRAINED_MODEL_SAVE_PATH \

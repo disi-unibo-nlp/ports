@@ -41,11 +41,11 @@ def main():
     logger.setLevel(logging.DEBUG)
     stream_handler = logging.StreamHandler()
     stream_handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter('')
     stream_handler.setFormatter(formatter)
     logger.addHandler(stream_handler)
 
-    file_handler = logging.FileHandler('/proj/mounted/log.out', mode='w')
+    file_handler = logging.FileHandler('/proj/mounted/logtmp.out', mode='w')
     file_handler.setLevel(logging.WARNING)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
@@ -123,12 +123,11 @@ def main():
     retr_model.eval()
     infer_model.eval()
 
-    def compute_embeddings(corpus, batch_size=16):
+    def compute_embeddings(corpus, batch_size=4, max_length=512):
         all_embeddings = []
-        # max_length = retr_tokenizer.model_max_length
         for i in range(0, len(corpus), batch_size):
             batch = corpus[i:i+batch_size]
-            batch = retr_tokenizer(batch, padding=True, truncation=True, return_tensors='pt')
+            batch = retr_tokenizer(batch, padding="max_length", truncation=True, max_length=max_length, return_tensors="pt")
             batch = {k:batch[k].to("cuda") for k in batch}
             out = retr_model(**batch) 
             embeddings = F.normalize(out[0][:, 0], p=2, dim=1)
@@ -150,26 +149,9 @@ def main():
         dataset = dataset['train'].train_test_split(test_size=0.3, seed=42)
     elif args.dataset_path == "ToolRetriever/BFCL":
         dataset = dataset['test'].train_test_split(test_size=0.3, seed=42)
-    elif args.dataset_path == "ToolRetriever/APIBench":
-        ds_dict = {}
-        for split in dataset:
-            for row in dataset[split]:
-                answ = row["answer"]
-                descr = row["api_description"]
-
-                if answ not in ds_dict: ds_dict[answ] = descr
-
-        def unique_descr(example):
-            out = example
-            out["api_description"] = ds_dict[example["answer"]]
-            return out
-
-        dataset = dataset.map(unique_descr)
-
-    # sampling
-    if 'Octopus' not in args.dataset_path:
-        dataset['train'] = dataset['train'].train_test_split(train_size=600, seed=42)['train']
-    dataset = dataset.shuffle(seed=42).flatten_indices()
+    if 'Octopus' not in args.dataset_path and args.dataset_path != "ToolRetriever/BFCL":
+        dataset['train'] = dataset['train'].train_test_split(test_size=0.8, seed=42)['train']
+    # dataset = dataset.shuffle(seed=42).flatten_indices()
 
     query_column = args.query_column
     response_column = args.response_column
@@ -349,6 +331,9 @@ def main():
         Compute the ranks@n for the batch, sum them up to the previous batches' values
         """
         rel = get_relevant_docs(batch_data, documents).to("cuda")
+        for i, api in enumerate(batch_data["api_description"]):
+            logger.warning(f"QUERY: {batch_data[query_column][i]}\nANSWER: {batch_data[response_column][i]}\nCORRECT API: {api}\nSELECTED DOC: {documents[rel[i]]}")
+            logger.warning("--------------------------------------------------")
         if verbose:
             logger.info(f"DOCS PER QUERY\n{documents_per_query}")
             logger.info(f"RELEVANT DOCS\n{rel}")
