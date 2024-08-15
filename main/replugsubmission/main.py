@@ -42,16 +42,11 @@ def main():
     stream_handler.setFormatter(formatter)
     logger.addHandler(stream_handler)
 
-    file_handler = logging.FileHandler('/proj/mounted/log.out', mode='w')
-    file_handler.setLevel(logging.WARNING)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-
     def log_mem_usage(topic):
         current_device = torch.cuda.current_device()
         memory_allocated = torch.cuda.memory_allocated(current_device)
         memory_reserved = torch.cuda.memory_reserved(current_device)
-        logger.warning(f"{topic} A: {memory_allocated / 1024**2} MB, R: {memory_reserved / 1024**2} MB")
+        logger.info(f"{topic} A: {memory_allocated / 1024**2} MB, R: {memory_reserved / 1024**2} MB")
 
     
     # load models and tokenizers
@@ -383,7 +378,7 @@ def main():
     for epoch in range(num_epochs):
         for index, batch in enumerate(train_data_loader):
             if verbose:
-                logger.warning(f"Epoch: {epoch}, Batch: {index}")
+                logger.info(f"Epoch: {epoch}, Batch: {index}")
             curr_bs, batch_data = parse_batch(dataset["train"], batch, index)
             retr_model.eval()
             with torch.no_grad():
