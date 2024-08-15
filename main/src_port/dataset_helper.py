@@ -190,6 +190,12 @@ class DatasetDownloader():
             "apibench" : "APIBench",
             "octopus" : "OctopusNonOverlapping",
             "toole" : "ToolENonOverlapping",
+            "toole_90_10" : "ToolENonOverlapping",
+            "toole_85_15" : "ToolENonOverlapping",
+            "toole_75_25" : "ToolENonOverlapping",
+            "toole_70_30" : "ToolENonOverlapping",
+            "toole_50_50" : "ToolENonOverlapping",
+            "toole_35_65" : "ToolENonOverlapping",
             "toolbench" : "ToolBench",
             "toole-overlap" : "ToolEOverlapping",
             "octopus-overlap" : "OctopusOverlapping"
@@ -202,7 +208,20 @@ class DatasetDownloader():
         """
         Download and return the dataset
         """
-        ds = load_dataset(self.data_path, self.data_sub_split)
+        if "toole" in self.dataset_name:# and "_" in self.dataset_name:
+            
+            split_name = f"parsed_data_{self.dataset_name.split('_',1)[-1]}" if "_" in self.dataset_name else "parsed_data"
+            print(f"Loading {self.data_path} - {split_name}")
+            ds = load_dataset(self.data_path, split_name)
+
+            if "90" not in self.dataset_name:
+                # use the smaller test set as reference for the ablative comparisons
+                ds_test = load_dataset("ToolRetriever/ToolENonOverlapping", "parsed_data_90_10",split="test")
+                ds["test"] = ds_test
+
+        else:
+            print(f"Loading {self.data_path} - {self.data_sub_split}")
+            ds = load_dataset(self.data_path, self.data_sub_split)
 
         if self.dataset_name == "toolbench":
             ds = ds.filter(lambda x : x["group"] == "G3")
@@ -518,7 +537,7 @@ def get_train_dataloader(dataset,
 
     triplet_dataloader = DataLoader(triplet_dataset,
                                 batch_size=batch_size,
-                                shuffle=Train,
+                                shuffle=False,#True,
                                 collate_fn=train_collator,
                                 drop_last=False)
                                     

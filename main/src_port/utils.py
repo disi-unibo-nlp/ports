@@ -56,6 +56,29 @@ def compute_embeddings(model,
     return sentence_embeddings_normal
 
 
+def get_ndcg_scores_multi(ndcg_k_values, batch_data, gold_ids_list, similarities, api_corpus=None, eval_triplets=None):
+    len_corpus = similarities.shape[-1]
+    ndcg_scores = [[] for _ in range(len(ndcg_k_values))]
+    n_data = batch_data["query"]["input_ids"].shape[0]
+
+    for ex_index in range(n_data):
+        true_relevance = np.zeros(len_corpus)
+        for pos_idx in gold_ids_list[ex_index]:
+            true_relevance[pos_idx] = 1
+
+        scores = similarities[ex_index].cpu().numpy()
+
+        for k_index, k_val in enumerate(ndcg_k_values):
+            ndcg_scores[k_index].append(
+                ndcg_score(
+                    [true_relevance],
+                    [scores],
+                    k=min(k_val, len_corpus)  # Ensure k is not larger than corpus size
+                )
+            )
+
+    return ndcg_scores
+
 def compute_similarity(model, 
                        queries, 
                        documents,

@@ -87,7 +87,8 @@ from src_port.utils import (
     get_gradient_norm,
     encode_query,
     embed_corpus,
-    get_ndcg_scores
+    get_ndcg_scores,
+    get_ndcg_scores_multi
 )
 
 from src_port.dataset_helper import (
@@ -113,7 +114,8 @@ def evaluate(retr_model,
              device : str =  "cuda", 
              k : int = 3,
              api_corpus : List[str] = None,
-             retr_tokenizer : AutoTokenizer = None):
+             retr_tokenizer : AutoTokenizer = None,
+             dataset_name : str = "toole"):
     retr_model.eval()
 
     ranks = [0 for _ in range(k)]
@@ -130,11 +132,17 @@ def evaluate(retr_model,
 
 
             gold_ids = []
-            #for _i, i in enumerate(range(bid*bs,bid*bs+bs)):
+
             for _i, i in enumerate(range(bid*eval_dataloader.batch_size, min((bid+1)*eval_dataloader.batch_size, num_samples))):
-                pos = eval_triplets[i]["positive"]
-                idx = api_corpus.index(pos)
-                gold_ids.append(idx)
+                if dataset_name not in ["apibench", "toolbench"]:
+                    pos = eval_triplets[i]["positive"]
+                    idx = api_corpus.index(pos)
+                    gold_ids.append(idx)
+                else:
+                    answ = eval_triplets[i]["pos_answer"]
+                    indices = [i for i,doc in enumerate(api_corpus) if answ in doc]
+                    gold_ids.append(indices)
+
             
 
             # Compute query embeddings
@@ -151,19 +159,30 @@ def evaluate(retr_model,
 
 
             indices = indices.view(bs,-1)
-            gold_ids = torch.tensor(gold_ids).view(1,-1).to(device)
 
-            for _k in range(k):
-              rank_at_n = torch.any(indices[:, :_k+1] == gold_ids.view(bs,-1), dim=-1).sum()
-              ranks[_k] += rank_at_n.item()
+            if dataset_name not in ["apibench", "toolbench"]:
+                gold_ids = torch.tensor(gold_ids).view(1,-1).to(device)
+
+                # Recall
+                for _k in range(k):
+                    rank_at_n = torch.any(indices[:, :_k+1] == gold_ids.view(bs,-1), dim=-1).sum()
+                    ranks[_k] += rank_at_n.item()
+                
+                # Compute NDCG score
+                this_ndcg_scores = get_ndcg_scores(ndcg_k_values, batch, gold_ids.squeeze(0), all_similarities, api_corpus, [eval_triplets[i] for i in range(bid*bs, bid*bs+bs)])
+            else:
+                # Recall
+                for _k in range(k):
+                    for b in range(bs):
+                        if any(gold_id in indices[b, :_k+1].cpu().numpy().tolist() for gold_id in gold_ids[b]):
+                            ranks[_k] += 1
+                
+                # NDGC
+                this_ndcg_scores = get_ndcg_scores_multi(ndcg_k_values, batch, gold_ids, all_similarities, api_corpus, [eval_triplets[i] for i in range(bid*bs, bid*bs+bs)])
             
-            # Compute NDCG score
-            this_ndcg_scores = get_ndcg_scores(ndcg_k_values, batch, gold_ids.squeeze(0), all_similarities, api_corpus, [eval_triplets[i] for i in range(bid*bs, bid*bs+bs)])
             for i, _ in enumerate(this_ndcg_scores):
                 ndcg_scores[i] += this_ndcg_scores[i]
 
-            for i, scores in enumerate(this_ndcg_scores):
-                ndcg_scores[i].extend(scores)
 
     # Normalize ranks
     ranks = [round(r / num_samples * 100, 3) for r in ranks]
@@ -184,7 +203,8 @@ def run_evaluation(retr_model : AutoModel,
                    eval_batch_size : int,
                    preprocessing_batch_size : int,
                    device : str,
-                   k_eval : int):
+                   k_eval : int,
+                   dataset_name : str = "toole"):
     retr_model.eval()
 
     logger.info("Get Eval DataLoader")
@@ -193,7 +213,7 @@ def run_evaluation(retr_model : AutoModel,
         "api_corpus_list" : eval_api_corpus,
         "retrieval_max_length" : retriever_max_seq_length,
         "retrieval_tokenizer" : retr_tokenizer,
-        "batch_size" : eval_batch_size
+        "batch_size" : eval_batch_size,
     }
     eval_triplet_dataloader, eval_triplets = get_eval_dataloader(**eval_data_config)
 
@@ -214,7 +234,8 @@ def run_evaluation(retr_model : AutoModel,
                     device,
                     k=k_eval,
                     api_corpus=eval_api_corpus,
-                    retr_tokenizer=retr_tokenizer)
+                    retr_tokenizer=retr_tokenizer,
+                    dataset_name=dataset_name)
 
     # Print results
     print("\n")
@@ -292,7 +313,9 @@ def train(dataset : Dataset,
         "retriever_max_seq_length" : retriever_max_seq_length,
         "inference_max_seq_length" : inference_max_seq_length,
         "epochs" : num_epochs,
-        "dataset" : dataset_name
+        "dataset" : dataset_name,
+        "embedding_update_steps" : len(dataset["train"]) // n_reembedding_steps,
+        "train_data_samples" : len(dataset["train"])
     }
 
     wandb.init(project=wandb_project_name, 
@@ -312,28 +335,11 @@ def train(dataset : Dataset,
         "eval_batch_size" : eval_batch_size,
         "preprocessing_batch_size" : preprocessing_batch_size,
         "device" : device,
-        "k_eval" : k_eval
+        "k_eval" : k_eval,
+        "dataset_name" : dataset_name
     }
     run_evaluation(**eval_config)
     
-
-
-    # # Load first dataloader
-    # train_data_config = {
-    #     "dataset" : dataset,
-    #     "api_corpus_list" : train_api_corpus,
-    #     "retr_model" : retr_model,
-    #     "retrieval_max_length" : retriever_max_seq_length,
-    #     "generateor_max_length" : inference_max_seq_length,
-    #     "retrieval_tokenizer" : retr_tokenizer,
-    #     "inference_tokenizer" : infer_tokenizer,
-    #     "epoch_number" : 0,
-    #     "batch_size" : train_batch_size,
-    #     "prompt_template" : prompt_template,
-    #     "num_neg_examples" : number_of_neg_examples,
-    #     "preprocessing_batch_size" : preprocessing_batch_size
-    # }
-    # triplet_dataloader = get_train_dataloader(**train_data_config)
 
     optimizer = torch.optim.AdamW(retr_model.parameters(), lr=learning_rate)
 
@@ -353,24 +359,8 @@ def train(dataset : Dataset,
         retr_model.train()
         data_splits = []
 
-        # if epoch != 0:
         if not n_reembedding_steps:
-            # logger.info("Creating pseudo-random dataloader")
-            # train_data_config = {
-            #     "dataset" : dataset,
-            #     "api_corpus_list" : train_api_corpus,
-            #     "retr_model" : retr_model,
-            #     "retrieval_max_length" : retriever_max_seq_length,
-            #     "generateor_max_length" : inference_max_seq_length,
-            #     "retrieval_tokenizer" : retr_tokenizer,
-            #     "inference_tokenizer" : infer_tokenizer,
-            #     "epoch_number" : epoch,
-            #     "batch_size" : train_batch_size,
-            #     "prompt_template" : prompt_template,
-            #     "num_neg_examples" : number_of_neg_examples,
-            #     "preprocessing_batch_size" : preprocessing_batch_size
-            # }
-            # triplet_dataloader = get_train_dataloader(**train_data_config)
+            # never re-embed corpus
             data_splits = [dataset]
         else:
             subsplit_len = ds_length // n_reembedding_steps
@@ -384,10 +374,8 @@ def train(dataset : Dataset,
                 data_splits.append(DatasetDict({"train":_ds_sample}))
 
         logger.info(f"Starting training epoch {epoch+1}/{num_epochs}")
-
         curr_global_step = 0
 
-        # Here ERROR if not n_reembedding_steps defined
         for ds in data_splits:
 
             logger.info(">> New data split")
@@ -617,7 +605,8 @@ def train(dataset : Dataset,
                         "eval_batch_size" : eval_batch_size,
                         "preprocessing_batch_size" : preprocessing_batch_size,
                         "device" : device,
-                        "k_eval" : k_eval
+                        "k_eval" : k_eval,
+                        "dataset_name" : dataset_name
                     }
                     run_evaluation(**eval_config)
 
@@ -632,7 +621,8 @@ def train(dataset : Dataset,
                 "eval_batch_size" : eval_batch_size,
                 "preprocessing_batch_size" : preprocessing_batch_size,
                 "device" : device,
-                "k_eval" : k_eval
+                "k_eval" : k_eval,
+                "dataset_name" : dataset_name
             }
             run_evaluation(**eval_config)
 
@@ -641,7 +631,7 @@ def train(dataset : Dataset,
 
 def main():
     parser = argparse.ArgumentParser(description='PORT training')
-    parser.add_argument('--dataset', type=str, default="bfcl", choices=["bfcl", "apibank", "apibench", "octopus", "octopus-overlap", "toole", "toole-overlap", "toolbench"], help='Dataset name for training and avaluation')
+    parser.add_argument('--dataset', type=str, default="bfcl", choices=["bfcl", "apibank", "apibench", "octopus", "octopus-overlap", "toole", "toole-overlap", "toolbench", "toole_90_10", "toole_85_15", "toole_75_25", "toole_70_30", "toole_50_50", "toole_35_65"], help='Dataset name for training and avaluation')
 
     # Models
     parser.add_argument('--inference_model_name', type=str, default="llama3-8B", choices=["llama3-8B", "codestral-22B", "gemma2-2B", "groqLlama3Tool-8B"], help="Pseudo-Name of the generative model to use for function calling")
@@ -761,6 +751,10 @@ def main():
         n_inst = min(args.max_eval_samples, len(dataset["test"]))
         selected_indices = random.sample(range(len(dataset["test"])), n_inst)
         dataset["test"] = dataset["test"].select(selected_indices)
+
+    
+    logger.info(">>> DATASET")
+    print(dataset)
 
     # > Create and embed corpora of functions
     logger.info("Defining tool corpora")
