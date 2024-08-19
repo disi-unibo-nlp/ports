@@ -1,8 +1,8 @@
-<div align="center"><img src="assets/ports_icon.png" width="10%"> </div>
-<h1 align="center"> PORTS </h1>
+<div align="center"><img src="assets/fishing_rod_tool.png" width="10%"> </div>
+<h1 align="center"><img src="assets/ports_icon.png" alt="port icon" width="25" height="auto"> PORTS</h1>
 <h2 align="center">Preference-Optimized Retrievers for Tool Selection with Large Language Models  </h2>
 
-This repository contains the code and datasets for reproducing the experiments described in the paper titled "PORTS: Preference-Optimized Retrievers for Tool Selection with Large Language Models." The paper introduces PORTS, a novel method to fine-tune retrievers that align with the preferences of a frozen Large Language Model (LLM) for tool selection tasks. By optimizing the correlation between retrieval probabilities and downstream performance, PORTS enhances the accuracy of tool selection while maintaining low computational demands. The approach is validated through extensive experiments on six diverse datasets, demonstrating significant improvements in tool selection accuracy compared to existing methods.
+This repository contains the code and datasets for reproducing the experiments described in the paper titled "**PORTS: Preference-Optimized Retrievers for Tool Selection with Large Language Models.**" The paper introduces **PORTS**, a novel method to fine-tune retrievers that align with the preferences of a frozen Large Language Model (LLM) for tool selection tasks. By optimizing the correlation between retrieval probabilities and downstream performance, **PORTS** enhances the accuracy of tool selection while maintaining low computational demands. The approach is validated through extensive experiments on six diverse datasets, demonstrating significant improvements in tool selection accuracy compared to existing methods.
 
 <p align="center">
 <img src="assets/ports_overview.png" width="70%" height="auto" alt="PORTS Training Overview" class="center">
@@ -18,7 +18,7 @@ This repository contains the code and datasets for reproducing the experiments d
 
 ## Model
 
-PORTS fine-tunes a retriever model to select the most appropriate tools based on preferences derived from a frozen LLM. The retriever is optimized through a dual loss approach: a perplexity-based preference signal and a contrastive semantic loss. This ensures that the retriever aligns with the LLM's preferences, leading to more accurate tool selection in various scenarios. The model is trained on two encoder architectures, RoBERTa-base and BGE-base, and evaluated using three LLMs with varying levels of expertise in tool usage.
+**PORTS** fine-tunes a retriever model to select the most appropriate tools based on preferences derived from a frozen LLM. The retriever is optimized through a dual loss approach: a perplexity-based preference signal and a contrastive semantic loss. This ensures that the retriever aligns with the LLM's preferences, leading to more accurate tool selection in various scenarios. The model is trained on two encoder architectures, RoBERTa-base and BGE-base, and evaluated using three LLMs with varying levels of expertise in tool usage.
 
 ## Dataset
 
