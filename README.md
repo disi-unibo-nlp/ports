@@ -1,3 +1,6 @@
+
+# <img src="assets/ports_icon.png" width="30" height="35" alt="Icon"> PORTS
+
 Dockerfile.rang-func-call is the Dockerfile used for the training runs and the demo with LlamaIndex
 
 main/ contains the scripts for the demo and the training algorithm (main.py)
