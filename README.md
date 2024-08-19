@@ -77,7 +77,7 @@ To get started with reproducing the experiments:
    # Models Configuration
    INFERENCE_MODEL_PSEUDONAME="llama3-8B"
    RETRIEVAL_MODEL_NAME="FacebookAI/roberta-base"
-   DATASET_NAME="toole"
+   DATASET_NAME="data/toole"
    
    python3 main_train_port.py --dataset $DATASET_NAME \
                               --inference_model_name $INFERENCE_MODEL_PSEUDONAME \
