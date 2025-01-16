@@ -24,11 +24,11 @@ GAMMA=0.5
 PREF_BETA=1
 CORPUS_UPDATES=50
 # Train Config
-N_EPOCHS=2
+N_EPOCHS=100
 INFERENCE_MODEL_PSEUDONAME="llama3-8B"
 RETRIEVAL_MODEL_NAME="BAAI/bge-base-en-v1.5"
 DATASET_NAME="toolbench"
-MAX_TRAIN_SAMPLES=300
+# MAX_TRAIN_SAMPLES=300
 WANDB_RUN_NAME="${DATASET_NAME}-${RETRIEVAL_MODEL_NAME}-${INFERENCE_MODEL_PSEUDONAME}-B${BETA}-G${GAMMA}-ORPOB${PREF_BETA}-LR${LR}"
 
 CUDA_VISIBLE_DEVICES=$DEVICE python3 /proj/main/main_train_port.py --dataset $DATASET_NAME \
@@ -57,6 +57,6 @@ CUDA_VISIBLE_DEVICES=$DEVICE python3 /proj/main/main_train_port.py --dataset $DA
                                                     --do_train \
                                                     --do_eval \
                                                     --eval_strategy "epoch" \
-                                                    --eval_steps 1000 \
-                                                    --load_in_4bit \
-                                                    --max_train_samples $MAX_TRAIN_SAMPLES
+                                                    --load_in_4bit 
+                                                    # --eval_steps 1000 \
+                                                    # --max_train_samples $MAX_TRAIN_SAMPLES
