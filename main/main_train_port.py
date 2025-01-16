@@ -106,6 +106,9 @@ from src_port.loss_functions import (
     compute_loss
 )
 
+query_id_dict = dict()
+apis_multi = set()
+
 
 def evaluate(retr_model,
              eval_dataloader,
@@ -119,6 +122,8 @@ def evaluate(retr_model,
     retr_model.eval()
 
     ranks = [0 for _ in range(k)]
+
+    seen_queries_multi = set()
 
     ndcg_k_values = [1, 3, 5]
     ndcg_scores = [[] for _ in range(len(ndcg_k_values))]
@@ -139,8 +144,7 @@ def evaluate(retr_model,
                     idx = api_corpus.index(pos)
                     gold_ids.append(idx)
                 else:
-                    answ = eval_triplets[i]["pos_answer"]
-                    indices = [i for i,doc in enumerate(api_corpus) if answ in doc]
+                    indices = [api_corpus.index(api) for api in apis_multi[query_id_dict[eval_triplets[i]["query"]]]]
                     gold_ids.append(indices)
 
             
@@ -172,10 +176,14 @@ def evaluate(retr_model,
                 this_ndcg_scores = get_ndcg_scores(ndcg_k_values, batch, gold_ids.squeeze(0), all_similarities, api_corpus, [eval_triplets[i] for i in range(bid*bs, bid*bs+bs)])
             else:
                 # Recall
-                for _k in range(k):
-                    for b in range(bs):
-                        if any(gold_id in indices[b, :_k+1].cpu().numpy().tolist() for gold_id in gold_ids[b]):
-                            ranks[_k] += 1
+                for b in range(bs):
+                    if batch["query"][b] in seen_queries_multi:
+                        continue
+                    for _k in range(k):
+                        # if any(gold_id in indices[b, :_k+1].cpu().numpy().tolist() for gold_id in gold_ids[b]):
+                        #     ranks[_k] += 1
+                        ranks[_k] += (torch.isin(indices[b, :_k+1].cpu(), torch.tensor(gold_ids[b])).sum().item() / len(gold_ids[b]))
+                    seen_queries_multi.add(batch["query"][b])
                 
                 # NDGC
                 this_ndcg_scores = get_ndcg_scores_multi(ndcg_k_values, batch, gold_ids, all_similarities, api_corpus, [eval_triplets[i] for i in range(bid*bs, bid*bs+bs)])
@@ -739,6 +747,12 @@ def main():
     logger.info("Loading dataset")
     dataset_downloader = DatasetDownloader(dataset_name=args.dataset)
     dataset = dataset_downloader.get_dataset()
+
+    if args.dataset in ["apibench", "toolbench"]:
+        global query_id_dict, apis_multi
+        query_id_dict = {x : i for i,x in enumerate(list(set(dataset["test"]["query_for_retrieval"])))}
+        apis_multi = {i : list({y["api_description"] for y in dataset["test"].filter(lambda z : z["query_for_retrieval"] == x)}) for x, i in query_id_dict.items()}
+
     dataset = dataset_downloader.post_process_answers(dataset)
 
     # Sample from dataset if necessary

@@ -180,7 +180,7 @@ class DatasetDownloader():
                  seed : int = 42):
 
         self.dataset_name = dataset_name
-        self.data_sub_split = "parsed_data"
+        self.data_sub_split = "parsed_data" if dataset_name != "toolbench" else "parsed_data_splitted"
         self.seed = seed
         
         base_ds_path = "ToolRetriever"
@@ -223,10 +223,10 @@ class DatasetDownloader():
             print(f"Loading {self.data_path} - {self.data_sub_split}")
             ds = load_dataset(self.data_path, self.data_sub_split)
 
-        if self.dataset_name == "toolbench":
-            ds = ds.filter(lambda x : x["group"] == "G3")
+        # if self.dataset_name == "toolbench":
+        #     ds = ds.filter(lambda x : x["group"] == "G3")
         
-        if self.dataset_name in ["toolbench", "bfcl"]:
+        if self.dataset_name == "bfcl":
             unique_k = list(ds.keys())[0]
             ds = ds[unique_k].train_test_split(test_size=0.3, seed=self.seed)
 
