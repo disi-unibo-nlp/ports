@@ -273,6 +273,8 @@ def run_evaluation(retr_model : AutoModel,
     del eval_corpus_embeddings
     torch.cuda.empty_cache()
 
+    return ranks, ndcg_scores
+
 
 def train(dataset : Dataset,
           dataset_name : str,
@@ -305,7 +307,11 @@ def train(dataset : Dataset,
           k_eval : int = 10,
           device : str = "cuda",
           wandb_project_name : str = "",
-          wandb_run_name : str = ""):
+          wandb_run_name : str = "",
+          save_strategy : str = "epoch",
+          save_steps : int = None,
+          save_dir : str = "./checkpoints",
+          max_checkpoints : int = None):
 
 
 
@@ -362,6 +368,8 @@ def train(dataset : Dataset,
     )
 
     kl_div = KLDivLoss(reduction='none')
+
+    saved_checkpoints = []
 
     for epoch in range(num_epochs):
         retr_model.train()
@@ -618,6 +626,30 @@ def train(dataset : Dataset,
                     }
                     run_evaluation(**eval_config)
 
+                # Save checkpoint if strategy is 'steps'
+                if save_strategy == "steps" and save_steps and curr_global_step % save_steps == 0:
+                    logger.info(f"Saving checkpoint at step {curr_global_step}")
+                    retr_model.save_pretrained(os.path.join(save_dir, f"checkpoint-step-{curr_global_step}"))
+
+            # Save checkpoint if strategy is 'epoch'
+            if save_strategy == "epoch":
+                logger.info(f"Saving checkpoint at epoch {epoch+1}")
+                ckpt_name = f"checkpoint-epoch-{epoch+1}"
+                retr_model.save_pretrained(os.path.join(save_dir, ckpt_name))
+
+                # Use R@1 as checkpoint score
+                score = ranks[0]
+                saved_checkpoints.append((ckpt_name, score))
+                if max_checkpoints and len(saved_checkpoints) > max_checkpoints:
+                    # remove worst
+                    worst_ckpt = min(saved_checkpoints, key=lambda x: x[1])
+                    worst_path = os.path.join(save_dir, worst_ckpt[0])
+                    if os.path.exists(worst_path):
+                        logger.info(f"Removing worst checkpoint: {worst_ckpt}")
+                        import shutil
+                        shutil.rmtree(worst_path)
+                    saved_checkpoints.remove(worst_ckpt)
+
         if eval_strategy == "epoch":
             logger.info(f"Starting evaluation epoch {epoch+1}/{num_epochs}")
             eval_config = {
@@ -632,7 +664,7 @@ def train(dataset : Dataset,
                 "k_eval" : k_eval,
                 "dataset_name" : dataset_name
             }
-            run_evaluation(**eval_config)
+            ranks, ndcg_scores = run_evaluation(**eval_config)
 
     logger.info("Training and evaluations are over")
     wandb.finish()
@@ -654,6 +686,15 @@ def main():
 
     parser.add_argument('--eval_strategy', type=str, default="epoch", choices=["epoch", "steps"], help="Strategy to use for evaluation")
     parser.add_argument('--eval_steps', type=int, default=None, help="Number of steps after which the evaluation is performed if eval_strategy = 'steps'")
+
+    parser.add_argument('--save_strategy', type=str, default="epoch", choices=["epoch", "steps"],
+                        help="Strategy to use for saving checkpoints")
+    parser.add_argument('--save_steps', type=int, default=None,
+                        help="Number of steps after which to save if save_strategy='steps'")
+    parser.add_argument('--save_dir', type=str, default="./checkpoints",
+                        help="Directory to save model checkpoints")
+    parser.add_argument('--max_checkpoints', type=int, default=None,
+                        help="Maximum number of checkpoints to store.")
 
     # Training/Eval config
     parser.add_argument('--max_train_samples', type=int, default=None, help="Maximum number of training instances to retain (all if set to None)")
@@ -828,7 +869,11 @@ def main():
         "k_eval" : k_eval,
         "device" : device,
         "wandb_project_name" : args.wandb_project_name,
-        "wandb_run_name" : args.wandb_run_name
+        "wandb_run_name" : args.wandb_run_name,
+        "save_strategy": args.save_strategy,
+        "save_steps": args.save_steps,
+        "save_dir": args.save_dir,
+        "max_checkpoints": args.max_checkpoints
     }
     logger.info("Starting Training and Evaluation")
     train(**train_eval_config)
