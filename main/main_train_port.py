@@ -44,6 +44,7 @@ from transformers import (
     set_seed
 )
 import torch
+from sentence_transformers import SentenceTransformer, models
 
 import logging
 import sys
@@ -106,168 +107,161 @@ from src_port.loss_functions import (
     compute_loss
 )
 
+from src_port.retrieval_evaluator import DeviceAwareInformationRetrievalEvaluator
+
 query_id_dict = dict()
 apis_multi = set()
 
 
-def evaluate(retr_model,
-             eval_dataloader,
-             eval_triplets,
-             corpus_embeddings,
-             device : str =  "cuda", 
-             k : int = 3,
-             api_corpus : List[str] = None,
-             retr_tokenizer : AutoTokenizer = None,
-             dataset_name : str = "toole"):
-    retr_model.eval()
+def evaluate_with_retrieval_evaluator(retr_model,
+                                      eval_dataloader,
+                                      eval_triplets,
+                                      corpus_embeddings,
+                                      device: str = "cuda",
+                                      k: int = 3,
+                                      api_corpus: List[str] = None,
+                                      retr_tokenizer: AutoTokenizer = None,
+                                      dataset_name: str = "toole"):
+    """
+    Evaluate using DeviceAwareInformationRetrievalEvaluator.
+    """
+    logger.info("Preparing data for DeviceAwareInformationRetrievalEvaluator")
 
-    ranks = [0 for _ in range(k)]
+    # Prepare queries and corpus
+    queries = {}
+    relevant_docs = {}
+    corpus = {str(idx): doc for idx, doc in enumerate(api_corpus)}
 
-    seen_queries_multi = set()
+    for i, triplet in enumerate(eval_triplets):
+        query_id = f"query_{i}"
+        queries[query_id] = triplet["query"]
+        if dataset_name not in ["apibench", "toolbench"]:
+            pos = triplet["positive"]
+            relevant_docs[query_id] = {str(api_corpus.index(pos))}
+        else:
+            relevant_docs[query_id] = {str(api_corpus.index(api)) for api in apis_multi[query_id_dict[triplet["query"]]]}
 
-    ndcg_k_values = [1, 3, 5]
-    ndcg_scores = [[] for _ in range(len(ndcg_k_values))]
-    num_samples = len(eval_dataloader.dataset)
+    # Initialize evaluator
+    evaluator = DeviceAwareInformationRetrievalEvaluator(
+        queries=queries,
+        corpus=corpus,
+        relevant_docs=relevant_docs,
+        mrr_at_k=[k],
+        ndcg_at_k=[1, 3, 5],
+        accuracy_at_k=[1, 3, 5],
+        device=device,
+        batch_size=eval_dataloader.batch_size,
+        show_progress_bar=True,
+        score_functions={"cosine": torch.nn.functional.cosine_similarity}
+    )
 
-    with torch.no_grad():
-        for bid, batch in tqdm(enumerate(eval_dataloader), total=len(eval_dataloader)):
-        
-            queries = batch["query"]
-            bs = queries["input_ids"].shape[0]
-
-
-            gold_ids = []
-
-            for _i, i in enumerate(range(bid*eval_dataloader.batch_size, min((bid+1)*eval_dataloader.batch_size, num_samples))):
-                if dataset_name not in ["apibench", "toolbench"]:
-                    pos = eval_triplets[i]["positive"]
-                    idx = api_corpus.index(pos)
-                    gold_ids.append(idx)
-                else:
-                    indices = [api_corpus.index(api) for api in apis_multi[query_id_dict[eval_triplets[i]["query"]]]]
-                    gold_ids.append(indices)
-
-            
-
-            # Compute query embeddings
-            query_embeddings = encode_query(retr_model, queries, device)
-
-            # Compute similarities with the entire corpus
-            embedded_documents_exp = corpus_embeddings.unsqueeze(0)
-            embedded_queries_exp = query_embeddings.view(bs,1,-1)
-            all_similarities = F.cosine_similarity(embedded_documents_exp,embedded_queries_exp, dim=-1)
-            
-            # Compute ranks
-            top_k_docs= all_similarities.topk(k, dim=-1, largest=True)
-            indices, values = top_k_docs.indices, top_k_docs.values
-
-
-            indices = indices.view(bs,-1)
-
-            if dataset_name not in ["apibench", "toolbench"]:
-                gold_ids = torch.tensor(gold_ids).view(1,-1).to(device)
-
-                # Recall
-                for _k in range(k):
-                    rank_at_n = torch.any(indices[:, :_k+1] == gold_ids.view(bs,-1), dim=-1).sum()
-                    ranks[_k] += rank_at_n.item()
-                
-                # Compute NDCG score
-                this_ndcg_scores = get_ndcg_scores(ndcg_k_values, batch, gold_ids.squeeze(0), all_similarities, api_corpus, [eval_triplets[i] for i in range(bid*bs, bid*bs+bs)])
-            else:
-                # Recall
-                for b in range(bs):
-                    if batch["query"][b] in seen_queries_multi:
-                        continue
-                    for _k in range(k):
-                        # if any(gold_id in indices[b, :_k+1].cpu().numpy().tolist() for gold_id in gold_ids[b]):
-                        #     ranks[_k] += 1
-                        ranks[_k] += (torch.isin(indices[b, :_k+1].cpu(), torch.tensor(gold_ids[b])).sum().item() / len(gold_ids[b]))
-                    seen_queries_multi.add(batch["query"][b])
-                
-                # NDGC
-                this_ndcg_scores = get_ndcg_scores_multi(ndcg_k_values, batch, gold_ids, all_similarities, api_corpus, [eval_triplets[i] for i in range(bid*bs, bid*bs+bs)])
-            
-            for i, _ in enumerate(this_ndcg_scores):
-                ndcg_scores[i] += this_ndcg_scores[i]
-
-
-    # Normalize ranks
-    ranks = [round(r / num_samples * 100, 3) for r in ranks]
+    # No need to compute query embeddings here, the evaluator will handle it
+    logger.info("Running evaluation with DeviceAwareInformationRetrievalEvaluator")
     
-    ndcg_score_avg = [0 for _ in range(len(ndcg_k_values))]
-    for i, k_val in enumerate(ndcg_k_values):
-        ndcg_score_avg[i] = round(sum(ndcg_scores[i]) / num_samples,3)
+    # Pass the raw model and corpus_embeddings directly to compute_metrices
+    scores = evaluator.compute_metrices(
+        model=retr_model,
+        corpus_embeddings=corpus_embeddings
+    )
 
-    return ranks, ndcg_score_avg
+    # Extract and log results
+    ranks = [scores["cosine"]["accuracy@k"][k] * 100 for k in [1, 3, 5]]
+    ndcg_scores = [scores["cosine"]["ndcg@k"][k] for k in [1, 3, 5]]
+
+    logger.info(f"Evaluation Results: R@K: {ranks}, NDCG@K: {ndcg_scores}")
+    return ranks, ndcg_scores
 
 
-
-def run_evaluation(retr_model : AutoModel,
-                   retr_tokenizer : AutoTokenizer,
-                   dataset : Dataset,
-                   eval_api_corpus : List[str],
-                   retriever_max_seq_length : int,
-                   eval_batch_size : int,
-                   preprocessing_batch_size : int,
-                   device : str,
-                   k_eval : int,
-                   dataset_name : str = "toole"):
+def run_evaluation(retr_model: AutoModel,
+                   retr_tokenizer: AutoTokenizer,
+                   dataset: Dataset,
+                   eval_api_corpus: List[str],
+                   retriever_max_seq_length: int,
+                   eval_batch_size: int,
+                   preprocessing_batch_size: int,
+                   device: str,
+                   k_eval: int,
+                   dataset_name: str = "toole"):
     retr_model.eval()
+    
+    # create tmp file where to save retr_model weights and then load the Transformer from that path
+    logger.info("Saving retr_model to tmp path")
+    tmp_model_path = os.path.join("tmp_retr_model")
+    retr_model.save_pretrained(tmp_model_path)
+    retr_tokenizer.save_pretrained(tmp_model_path)
+
+    logger.info("Loading retr_model from tmp path")
+    transformer = models.Transformer(tmp_model_path)
+    embedding_dim = transformer.get_word_embedding_dimension()
+    
+    pooling = models.Pooling(
+        transformer.get_word_embedding_dimension(),
+        pooling_mode_cls_token=True,
+        pooling_mode_mean_tokens=False,       # Ensure mean pooling is disabled
+        pooling_mode_max_tokens=False,        # Ensure max pooling is disabled
+        pooling_mode_mean_sqrt_len_tokens=False  # Ensure mean_sqrt_len pooling is disabled
+    )
+
+    normalize = models.Normalize()
+    retr_model = SentenceTransformer(modules=[transformer, pooling, normalize], device=device)
+    print(f"RETR_MODEL: {retr_model.get_sentence_embedding_dimension()}")
+
 
     logger.info("Get Eval DataLoader")
     eval_data_config = {
-        "dataset" : dataset, 
-        "api_corpus_list" : eval_api_corpus,
-        "retrieval_max_length" : retriever_max_seq_length,
-        "retrieval_tokenizer" : retr_tokenizer,
-        "batch_size" : eval_batch_size,
+        "dataset": dataset,
+        "api_corpus_list": eval_api_corpus,
+        "retrieval_max_length": retriever_max_seq_length,
+        "retrieval_tokenizer": retr_tokenizer,
+        "batch_size": eval_batch_size,
     }
     eval_triplet_dataloader, eval_triplets = get_eval_dataloader(**eval_data_config)
 
     logger.info("Embedding Tool Corpus")
     eval_corpus_embeddings = embed_corpus(retr_model,
-                                        retr_tokenizer,
-                                        eval_api_corpus,
-                                        device,
-                                        batch_size=preprocessing_batch_size,
-                                        max_length=retriever_max_seq_length)
+                                           retr_tokenizer,
+                                           eval_api_corpus,
+                                           device,
+                                           batch_size=preprocessing_batch_size,
+                                           max_length=retriever_max_seq_length)
     eval_corpus_embeddings = eval_corpus_embeddings.to(device)
 
-    logger.info("Compuring rank accuracy")
-    ranks, ndcg_scores = evaluate(retr_model,
-                    eval_triplet_dataloader,
-                    eval_triplets,
-                    eval_corpus_embeddings,
-                    device,
-                    k=k_eval,
-                    api_corpus=eval_api_corpus,
-                    retr_tokenizer=retr_tokenizer,
-                    dataset_name=dataset_name)
+    logger.info("Computing rank accuracy using DeviceAwareInformationRetrievalEvaluator")
+    ranks, ndcg_scores = evaluate_with_retrieval_evaluator(
+        retr_model,
+        eval_triplet_dataloader,
+        eval_triplets,
+        eval_corpus_embeddings,
+        device=device,
+        k=k_eval,
+        api_corpus=eval_api_corpus,
+        retr_tokenizer=retr_tokenizer,
+        dataset_name=dataset_name
+    )
 
     # Print results
     print("\n")
     print("EVALUATION")
-    print("*"*50)
+    print("*" * 50)
     print(">>> R@K")
     for n in range(k_eval):
-        print(f"RANK@{n+1}: {ranks[n]:.2f}%")
-    print("-"*30)
+        print(f"RANK@{n + 1}: {ranks[n]:.2f}%")
+    print("-" * 30)
     print(">>> NDCG@K")
     ndcg_k_values = [1, 3, 5]
     for n, _k in enumerate(ndcg_k_values):
         print(f"NDCG@{_k}: {ndcg_scores[n]:.2f}")
-    print("*"*50)
+    print("*" * 50)
     print("\n")
 
     log_eval = {}
     for n in range(k_eval):
-        log_eval[f"RANK@{n+1}"] = ranks[n]
+        log_eval[f"RANK@{n + 1}"] = ranks[n]
 
     for n, _k in enumerate(ndcg_k_values):
         log_eval[f"NDCG@{_k}"] = ndcg_scores[n]
 
-    wandb.log(log_eval)
+    # wandb.log(log_eval)
 
     retr_model.train()
     del eval_corpus_embeddings
@@ -332,10 +326,10 @@ def train(dataset : Dataset,
         "train_data_samples" : len(dataset["train"])
     }
 
-    wandb.init(project=wandb_project_name, 
-               name=wandb_run_name,
-               config=config)
-    wandb.watch(retr_model, log_freq=log_freq)
+    # wandb.init(project=wandb_project_name, 
+    #            name=wandb_run_name,
+    #            config=config)
+    # wandb.watch(retr_model, log_freq=log_freq)
     infer_model.eval()
     
     # First evaluation
@@ -580,29 +574,29 @@ def train(dataset : Dataset,
                 pbar.set_postfix({'Loss': loss.item(), 'RePlug Loss' : ppl_pr_KL_loss.item(), "OPRO Loss" : -pref_loss.item(), "Retrieval Compared Accuracy" : retrieval_accuracy.mean().cpu().item()})
 
 
-                if curr_global_step % log_freq == 0:
+                # if curr_global_step % log_freq == 0:
                     
-                    wandb.log({
-                        "ports_loss": loss.item(),
-                        "replug_loss": ppl_pr_KL_loss.item(),
-                        "odds_ratio_loss": -pref_loss.item(),
-                        "ratio_reward" : pref_ratio,
-                        "retrieval_accuracy" : retrieval_accuracy.mean().cpu(), 
-                        "positive_retrieval_probability" : pos_retrieval_prob.mean().cpu(),
-                        "positive_log_probability" : pos_rewards.mean().cpu(),
-                        "negative_retrieval_probability" : neg_retrieval_probs.mean().cpu(),
-                        "negative_log_probability" : neg_rewards.mean().cpu(),
-                        "positive_ppl" : pos_perplexity.mean().cpu(),
-                        "positive_Q_ppl" : Q[:,0].mean().cpu(),
-                        "positive_sim" : pos_simialrity.mean().cpu(),
-                        "negative_sim" : neg_similarity.mean(-1).mean().cpu(),
-                        "negative_ppl" : neg_perplexity.mean(-1).mean().cpu(),
-                        "negative_Q_ppl" : Q[:,1:].mean(-1).mean().cpu(),
-                        "mean_retr_prob_ration" : maean_prob_ratio,
-                        "gradient_norm" : grad_norm,
-                        "learning_rate": optimizer.param_groups[0]['lr'],
-                        "epoch" : epoch + 1
-                    })
+                #     wandb.log({
+                #         "ports_loss": loss.item(),
+                #         "replug_loss": ppl_pr_KL_loss.item(),
+                #         "odds_ratio_loss": -pref_loss.item(),
+                #         "ratio_reward" : pref_ratio,
+                #         "retrieval_accuracy" : retrieval_accuracy.mean().cpu(), 
+                #         "positive_retrieval_probability" : pos_retrieval_prob.mean().cpu(),
+                #         "positive_log_probability" : pos_rewards.mean().cpu(),
+                #         "negative_retrieval_probability" : neg_retrieval_probs.mean().cpu(),
+                #         "negative_log_probability" : neg_rewards.mean().cpu(),
+                #         "positive_ppl" : pos_perplexity.mean().cpu(),
+                #         "positive_Q_ppl" : Q[:,0].mean().cpu(),
+                #         "positive_sim" : pos_simialrity.mean().cpu(),
+                #         "negative_sim" : neg_similarity.mean(-1).mean().cpu(),
+                #         "negative_ppl" : neg_perplexity.mean(-1).mean().cpu(),
+                #         "negative_Q_ppl" : Q[:,1:].mean(-1).mean().cpu(),
+                #         "mean_retr_prob_ration" : maean_prob_ratio,
+                #         "gradient_norm" : grad_norm,
+                #         "learning_rate": optimizer.param_groups[0]['lr'],
+                #         "epoch" : epoch + 1
+                #     })
 
                 del Q, Pr_retr, ppl_pr_KL_loss, pref_loss, loss, pos_retrieval_prob, neg_retrieval_probs, neg_retrieval_prob
                 del neg_perplexity, pos_perplexity
@@ -638,8 +632,8 @@ def train(dataset : Dataset,
                 retr_model.save_pretrained(os.path.join(save_dir, ckpt_name))
 
                 # Use R@1 as checkpoint score
-                score = ranks[0]
-                saved_checkpoints.append((ckpt_name, score))
+                #score = ranks[0]
+                saved_checkpoints.append((ckpt_name, ""))
                 if max_checkpoints and len(saved_checkpoints) > max_checkpoints:
                     # remove worst
                     worst_ckpt = min(saved_checkpoints, key=lambda x: x[1])
@@ -667,7 +661,7 @@ def train(dataset : Dataset,
             ranks, ndcg_scores = run_evaluation(**eval_config)
 
     logger.info("Training and evaluations are over")
-    wandb.finish()
+    # wandb.finish()
 
 def main():
     parser = argparse.ArgumentParser(description='PORT training')

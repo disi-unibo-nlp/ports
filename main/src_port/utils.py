@@ -143,18 +143,25 @@ def embed_corpus(retr_model,
     retr_model.eval()
     all_embeddings = []
 
+
     with torch.no_grad():
         for i in tqdm(range(0, len(corpus), batch_size), desc="Embedding corpus"):
             batch = corpus[i:i+batch_size]
-            batch = retr_tokenizer(batch, padding="max_length", truncation=True, max_length=max_length, return_tensors="pt")
-            batch = {k:batch[k].to(device) for k in batch}
+            
+            # batch = retr_tokenizer(batch, padding="max_length", truncation=True, max_length=max_length, return_tensors="pt")
+            # batch = {k:batch[k].to(device) for k in batch}
+            # out = retr_model(**batch)
+            # embeddings = F.normalize(out[0][:, 0], p=2, dim=-1)
 
-            out = retr_model(**batch)
-
-            embeddings = F.normalize(out[0][:, 0], p=2, dim=-1)
+            embeddings = retr_model.encode(batch, 
+                                           show_progress_bar=False,
+                                           convert_to_tensor=True,
+                                           device=device)
             if len(embeddings.shape) > 2:
                 embeddings = embeddings.squeeze(0)
+            
             all_embeddings.append(embeddings.cpu())
+            
 
     return torch.cat(all_embeddings, dim=0)
 

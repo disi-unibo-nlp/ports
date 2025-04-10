@@ -34,7 +34,7 @@ K_ACC_UPPER=3
 
 MAX_EVAL_SAMPLES=200
 
-WANDB_PROJECT_NAME="PORTS_AAAI"
+WANDB_PROJECT_NAME="PORTS_AAAI-EMNLP"
 
 LOG_FREQ=20
 
@@ -50,14 +50,14 @@ N_EPOCHS=2
 
 
 # for INFERENCE_MODEL_PSEUDONAME in ${MODELS[@]}; do
-INFERENCE_MODEL_PSEUDONAME="codestral-22B"
+INFERENCE_MODEL_PSEUDONAME="llama3-8B" # "gemma2-2B" # "codestral-22B" # "groqLlama3Tool-8B" # "llama3-8B"
 
 RETR_MODELS=("FacebookAI/roberta-base" "BAAI/bge-base-en-v1.5")
 
 MAX_TRAIN_SAMPLES=300
 
 #LOW_RES_DATASETS=("apibench" "toolbench" "toole-overlap" "toole" "apibank" "bfcl" "octopus" "octopus-overlap")
-LOW_RES_DATASETS=("toole-overlap" "toole" "apibank" "bfcl" "octopus" "octopus-overlap")
+LOW_RES_DATASETS=("toole")
 #LOW_RES_DATASETS=("apibench" "toolbench")
 #WHOLE_DS=("octopus" "octopus-overlap" "bfcl")
 

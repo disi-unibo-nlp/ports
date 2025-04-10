@@ -8,7 +8,6 @@ __pycache__/
 
 # Distribution / packaging
 .Python
-build/
 develop-eggs/
 dist/
 downloads/
@@ -176,3 +175,7 @@ cache*.arrow
 
 
 main/src_port/logs/*
+
+*.json
+*.log
+*.safetensors
