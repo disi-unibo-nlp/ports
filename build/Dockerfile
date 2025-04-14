@@ -4,7 +4,7 @@ FROM nvidia/cuda:12.2.0-devel-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Set work directory
-WORKDIR /
+WORKDIR /workspace
 
 # Install general-purpose dependencies
 RUN apt-get update -y && \

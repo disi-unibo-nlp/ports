@@ -280,7 +280,7 @@ def train(dataset : Dataset,
           eval_api_corpus : List[str],
           data_collator_completion : DataCollatorMixin,
           eval_strategy : str = "epoch",
-          eval_steps : int = None,
+          eval_steps : float = None, # Changed type hint to float
           n_reembedding_steps : int = None,
           prompt_template : str = "",
           instruction_prompt : str = "",
@@ -404,6 +404,16 @@ def train(dataset : Dataset,
                 "preprocessing_batch_size" : preprocessing_batch_size
             }
             triplet_dataloader = get_train_dataloader(**train_data_config)
+
+            # Calculate evaluation step interval if strategy is 'steps'
+            steps_per_split = len(triplet_dataloader)
+            evaluation_step_interval = None
+            if eval_strategy == "steps" and eval_steps is not None:
+                if not (0 < eval_steps <= 1):
+                    raise ValueError("eval_steps must be a float between 0 (exclusive) and 1 (inclusive) when eval_strategy is 'steps'")
+                evaluation_step_interval = max(1, int(steps_per_split * eval_steps)) # Ensure at least 1 step
+                logger.info(f"Evaluation strategy: 'steps'. Evaluating every {evaluation_step_interval} steps ({eval_steps*100:.2f}% of {steps_per_split} steps in this split).")
+
 
             pbar = tqdm(enumerate(triplet_dataloader), total=len(triplet_dataloader), desc="Training PORT with RePlug+ORPO")
             for bid, batch in pbar:
@@ -603,9 +613,10 @@ def train(dataset : Dataset,
                 del pref_ratio, retrieval_accuracy, pos_rewards, neg_rewards, maean_prob_ratio
                 torch.cuda.empty_cache()
 
-                if eval_strategy == "steps" and curr_global_step % eval_steps == 0 and curr_global_step != 0:
+                # Check evaluation condition based on strategy and calculated interval
+                if eval_strategy == "steps" and evaluation_step_interval is not None and curr_global_step % evaluation_step_interval == 0 and curr_global_step != 0:
 
-                    logger.info(f"Starting evaluation epoch {epoch+1}/{num_epochs} - step {bid*eval_steps}")
+                    logger.info(f"Starting evaluation epoch {epoch+1}/{num_epochs} - step {curr_global_step}")
                     eval_config = {
                         "retr_model" : retr_model,
                         "retr_tokenizer" : retr_tokenizer,
@@ -679,7 +690,7 @@ def main():
     parser.add_argument('--load_in_4bit', action='store_true', default=False, help="Whether to load the model in 4 bit")
 
     parser.add_argument('--eval_strategy', type=str, default="epoch", choices=["epoch", "steps"], help="Strategy to use for evaluation")
-    parser.add_argument('--eval_steps', type=int, default=None, help="Number of steps after which the evaluation is performed if eval_strategy = 'steps'")
+    parser.add_argument('--eval_steps', type=float, default=None, help="If eval_strategy='steps', specifies the fraction of steps within an epoch/split after which evaluation is performed (e.g., 0.1 for every 10% of steps).")
 
     parser.add_argument('--save_strategy', type=str, default="epoch", choices=["epoch", "steps"],
                         help="Strategy to use for saving checkpoints")

@@ -466,6 +466,21 @@ def main(args):
 
         logger.info(f"Data preparation finished in {time.time() - prep_start:.2f} seconds.")
 
+        # Calculate evaluation steps based on fraction if provided
+        evaluation_step_interval = 0 # Default: evaluate per epoch
+        steps_per_epoch = len(train_dataloader)
+        if ir_evaluator and args.eval_steps is not None and args.eval_steps > 0:
+             if not (0 < args.eval_steps <= 1):
+                 raise ValueError("eval_steps must be a float between 0 (exclusive) and 1 (inclusive)")
+             evaluation_step_interval = max(1, int(steps_per_epoch * args.eval_steps))
+             logger.info(f"Evaluation strategy: 'steps'. Evaluating every {evaluation_step_interval} steps ({args.eval_steps*100:.2f}% of {steps_per_epoch} steps per epoch).")
+        elif ir_evaluator:
+             logger.info(f"Evaluation strategy: 'epoch'. Evaluating every {steps_per_epoch} steps (at the end of each epoch).")
+             evaluation_step_interval = steps_per_epoch # Evaluate at the end of epoch if eval_steps <= 0 or None
+        else:
+             logger.info("No evaluator available, skipping evaluation steps calculation.")
+
+
         wandb_run = None
         if not args.do_eval_only and not args.disable_wandb:
             run_name = f"SentTrans-{args.model_name.split('/')[-1]}-{args.dataset}-{datetime.now().strftime('%Y%m%d-%H%M')}"
@@ -530,12 +545,12 @@ def main(args):
                 epochs=num_epochs,
                 warmup_steps=args.warmup_steps,
                 evaluator=ir_evaluator,
-                evaluation_steps=args.eval_steps if ir_evaluator else 0,
+                evaluation_steps=evaluation_step_interval, # Use calculated interval
                 callback=callback_func,
                 use_amp=True,
                 checkpoint_path=model_save_path,
                 checkpoint_save_total_limit=args.checkpoint_save_total_limit,
-                checkpoint_save_steps=args.eval_steps if ir_evaluator and args.eval_steps > 0 else len(train_dataloader),
+                checkpoint_save_steps=evaluation_step_interval, # Use calculated interval for checkpoints too
                 optimizer_params={"lr": args.lr},
                 scheduler=args.scheduler,
                 save_best_model=True if ir_evaluator else False,
@@ -666,8 +681,8 @@ if __name__ == '__main__':
                         help="Number of warmup steps")
     parser.add_argument("--lr", default=2e-5, type=float,
                         help="Learning rate")
-    parser.add_argument("--eval_steps", default=250, type=int,
-                        help="Evaluate model every X steps (set to 0 or less to evaluate only per epoch)")
+    parser.add_argument("--eval_steps", default=None, type=float,
+                        help="Evaluate model every X fraction of steps within an epoch (e.g., 0.1 for every 10%). If None or <= 0, evaluate per epoch.")
     parser.add_argument("--do_eval_only", action="store_true",
                         help="Only run evaluation, no training (requires model_name to be a path to a trained model)")
     parser.add_argument("--output_dir", default="output/api_retriever",

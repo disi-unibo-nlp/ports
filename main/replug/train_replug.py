@@ -86,27 +86,32 @@ def main():
     if verbose:
         logger.info(f"Model dtype: {next(infer_model.parameters()).dtype}")
 
+    eval_steps_fraction = getattr(args, 'eval_steps', None)
+
     if log_wandb:
         wandb_key = os.getenv('WANDB_KEY')
         name = args.wandb_proj_name
         wandb.login(key=wandb_key)
+        wandb_config = {
+            "retr_model_name_or_path": args.retr_model_name_or_path,
+            "infer_model_name_or_path": args.infer_model_name_or_path,
+            "quantize": args.quantize,
+            "quantization_4bit": args.quantization_4bit,
+            "batch_size": args.batch_size,
+            "num_train_epochs": args.num_train_epochs,
+            "num_retrieved_docs_per_query": args.num_retrieved_docs_per_query,
+            "gamma_value": args.gamma_value,
+            "beta_value": args.beta_value,
+            "learning_rate": args.learning_rate,
+            "lr_scheduler": args.lr_scheduler,
+            "dataset_path": args.dataset_path,
+        }
+        if eval_steps_fraction is not None:
+            wandb_config["eval_steps_fraction"] = eval_steps_fraction
         wandb.init(
             project='fine-tuning-retriever',
             name=name if name else f"training run - {args.dataset_path.split('/')[-1]}",
-            config={
-                "retr_model_name_or_path": args.retr_model_name_or_path,
-                "infer_model_name_or_path": args.infer_model_name_or_path,
-                "quantize": args.quantize,
-                "quantization_4bit": args.quantization_4bit,
-                "batch_size": args.batch_size,
-                "num_train_epochs": args.num_train_epochs,
-                "num_retrieved_docs_per_query": args.num_retrieved_docs_per_query,
-                "gamma_value": args.gamma_value,
-                "beta_value": args.beta_value,
-                "learning_rate": args.learning_rate,
-                "lr_scheduler": args.lr_scheduler,
-                "dataset_path": args.dataset_path,
-            }
+            config=wandb_config
         )
         wandb.watch(retr_model_base, log_freq=10)
 
@@ -349,6 +354,20 @@ def main():
         pooling_model = models.Pooling(base_model.config.hidden_size, pooling_mode_cls_token=True)
         return SentenceTransformer(modules=[base_model, pooling_model], device=device)
 
+    steps_per_epoch = len(train_data_loader)
+    evaluation_step_interval = None
+    run_end_of_epoch_eval = True
+
+    if eval_steps_fraction is not None and eval_steps_fraction > 0:
+        if not (0 < eval_steps_fraction <= 1):
+            raise ValueError("eval_steps must be a float between 0 (exclusive) and 1 (inclusive)")
+        evaluation_step_interval = max(1, int(steps_per_epoch * eval_steps_fraction))
+        logger.info(f"Evaluation strategy: 'steps'. Evaluating every {evaluation_step_interval} steps ({eval_steps_fraction*100:.2f}% of {steps_per_epoch} steps per epoch).")
+        run_end_of_epoch_eval = False
+    else:
+        logger.info(f"Evaluation strategy: 'epoch'. Evaluating every {steps_per_epoch} steps (at the end of each epoch).")
+        evaluation_step_interval = steps_per_epoch
+
     logger.info("--- Initial Evaluation ---")
     retr_model_base.eval()
     retr_model_eval_instance = get_sentence_transformer(retr_model_base, device="cuda")
@@ -374,8 +393,11 @@ def main():
     torch.cuda.empty_cache()
 
     retr_model_base.train()
+    global_step = 0
     for epoch in range(num_epochs):
         for index, batch in enumerate(train_data_loader):
+            current_step_in_epoch = index + 1
+            global_step += 1
             if verbose:
                 logger.info(f"Epoch: {epoch}, Batch: {index}")
             curr_bs, batch_data = parse_batch(dataset["train"], batch, index)
@@ -426,32 +448,59 @@ def main():
             del perplexities, Q, Pr, inner_data_loader, inner_batch, documents_per_query
             torch.cuda.empty_cache()
             if log_wandb:
-                wandb.log({"Training Loss": loss.item(), "Epoch": epoch, "Step": index})
-        
-        logger.info(f"--- Evaluating after Epoch {epoch+1} ---")
-        retr_model_base.eval()
-        retr_model_eval_instance = get_sentence_transformer(retr_model_base, device="cuda")
-        with torch.no_grad():
-            embedded_eval_documents = embed_corpus(retr_model_eval_instance,
-                                                   retr_tokenizer,
-                                                   eval_documents,
-                                                   device="cuda",
-                                                   batch_size=args.batch_size,
-                                                   max_length=args.retr_max_seq_length)
+                wandb.log({"Training Loss": loss.item(), "Epoch": epoch, "Step": global_step})
 
-        evaluate_with_retrieval_evaluator(
-            retr_model_eval=retr_model_eval_instance,
-            eval_dataset_split=dataset["test"],
-            eval_api_corpus=eval_documents,
-            corpus_embeddings=embedded_eval_documents,
-            device="cuda",
-            k_values_accuracy=[1, 3, 5],
-            k_values_ndcg=[1, 3, 5],
-            eval_batch_size=args.batch_size
-        )
-        retr_model_base.train()
-        del embedded_eval_documents, retr_model_eval_instance
-        torch.cuda.empty_cache()
+            if evaluation_step_interval is not None and global_step % evaluation_step_interval == 0:
+                logger.info(f"--- Evaluating at Epoch {epoch+1}, Step {current_step_in_epoch}/{steps_per_epoch} (Global Step {global_step}) ---")
+                retr_model_base.eval()
+                retr_model_eval_instance = get_sentence_transformer(retr_model_base, device="cuda")
+                with torch.no_grad():
+                    embedded_eval_documents = embed_corpus(retr_model_eval_instance,
+                                                           retr_tokenizer,
+                                                           eval_documents,
+                                                           device="cuda",
+                                                           batch_size=args.batch_size,
+                                                           max_length=args.retr_max_seq_length)
+
+                evaluate_with_retrieval_evaluator(
+                    retr_model_eval=retr_model_eval_instance,
+                    eval_dataset_split=dataset["test"],
+                    eval_api_corpus=eval_documents,
+                    corpus_embeddings=embedded_eval_documents,
+                    device="cuda",
+                    k_values_accuracy=[1, 3, 5],
+                    k_values_ndcg=[1, 3, 5],
+                    eval_batch_size=args.batch_size
+                )
+                retr_model_base.train()
+                del embedded_eval_documents, retr_model_eval_instance
+                torch.cuda.empty_cache()
+
+        if run_end_of_epoch_eval:
+            logger.info(f"--- Evaluating after Epoch {epoch+1} ---")
+            retr_model_base.eval()
+            retr_model_eval_instance = get_sentence_transformer(retr_model_base, device="cuda")
+            with torch.no_grad():
+                embedded_eval_documents = embed_corpus(retr_model_eval_instance,
+                                                       retr_tokenizer,
+                                                       eval_documents,
+                                                       device="cuda",
+                                                       batch_size=args.batch_size,
+                                                       max_length=args.retr_max_seq_length)
+
+            evaluate_with_retrieval_evaluator(
+                retr_model_eval=retr_model_eval_instance,
+                eval_dataset_split=dataset["test"],
+                eval_api_corpus=eval_documents,
+                corpus_embeddings=embedded_eval_documents,
+                device="cuda",
+                k_values_accuracy=[1, 3, 5],
+                k_values_ndcg=[1, 3, 5],
+                eval_batch_size=args.batch_size
+            )
+            retr_model_base.train()
+            del embedded_eval_documents, retr_model_eval_instance
+            torch.cuda.empty_cache()
 
     if verbose:
         logger.info("TRAINING FINISHED.")
