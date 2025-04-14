@@ -72,7 +72,7 @@ LOAD_IN_4BIT="true" # Corresponds to --load_in_4bit in train_ports.sh -> --quant
 # --- End Configuration ---
 
 # Define the Python script path
-PYTHON_SCRIPT="/home/molfetta/ports/main/replug/train_replug.py"
+PYTHON_SCRIPT="/home/molfetta/ports/main/train_replug.py"
 
 # Create output directory if save path is specified and used for saving
 mkdir -p $SAVE_PATH

@@ -76,13 +76,13 @@ else:
 logger = logging.getLogger(__name__)
 
 
-from src_port.prompt_templates import (
+from src.port.prompt_templates import (
     pseudo_name_mapping, 
     pseudo_name_instr_mapping, 
     PROMPT_TEMPLATES
 )
 
-from src_port.utils import (
+from src.port.utils import (
     compute_similarity,
     compute_embeddings,
     get_gradient_norm,
@@ -92,13 +92,13 @@ from src_port.utils import (
     get_ndcg_scores_multi
 )
 
-from src_port.dataset_helper import (
+from src.port.dataset_helper import (
     DatasetDownloader,
     get_eval_dataloader,
     get_train_dataloader
 )
 
-from src_port.loss_functions import (
+from src.port.loss_functions import (
     compute_perplexity,
     get_batch_logps,
     odds_ratio_loss,
@@ -107,7 +107,7 @@ from src_port.loss_functions import (
     compute_loss
 )
 
-from src_port.retrieval_evaluator import DeviceAwareInformationRetrievalEvaluator
+from src.port.retrieval_evaluator import DeviceAwareInformationRetrievalEvaluator
 
 query_id_dict = dict()
 apis_multi = set()

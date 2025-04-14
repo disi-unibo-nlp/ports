@@ -31,7 +31,7 @@ from sentence_transformers import (
     InputExample,
     SentenceTransformer
 )
-from src_port.retrieval_evaluator import DeviceAwareInformationRetrievalEvaluator
+from src.port.retrieval_evaluator import DeviceAwareInformationRetrievalEvaluator
 
 # Set up environment
 load_dotenv()
@@ -39,9 +39,9 @@ app_path = os.environ.get("APP_PATH", os.path.dirname(__file__))
 sys.path.insert(0, os.path.abspath(app_path))
 
 try:
-    from src_port.dataset_helper import DatasetDownloader
+    from src.port.dataset_helper import DatasetDownloader
 except ImportError:
-    logger.error("Failed to import DatasetDownloader. Ensure src_port is in the Python path.")
+    logger.error("Failed to import DatasetDownloader. Ensure src.port is in the Python path.")
     class DatasetDownloader:
         def __init__(self, dataset_name):
             logger.error("Using dummy DatasetDownloader.")
