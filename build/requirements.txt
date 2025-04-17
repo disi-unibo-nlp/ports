@@ -24,3 +24,6 @@ sentencepiece==0.2.0
 trl==0.16.1
 scikit-learn==1.6.1
 matplotlib==3.10.1
+
+pretty_errors==1.2.25
+dotenv==0.9.9

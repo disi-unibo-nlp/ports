@@ -181,6 +181,7 @@ class DeviceAwareInformationRetrievalEvaluator(SentenceEvaluator):
         # Write results to disc
         if output_path is not None and self.write_csv:
             csv_path = os.path.join(output_path, self.csv_file)
+            os.makedirs(os.path.dirname(csv_path), exist_ok=True)  # Ensure the directory exists
             if not os.path.isfile(csv_path):
                 fOut = open(csv_path, mode="w", encoding="utf-8")
                 fOut.write(",".join(self.csv_headers))
@@ -245,13 +246,17 @@ class DeviceAwareInformationRetrievalEvaluator(SentenceEvaluator):
             logger.error("No corpus available for evaluation")
             return {"error": "No corpus available"}
             
-        max_k = max(
-            max(self.mrr_at_k),
-            max(self.ndcg_at_k),
-            max(self.accuracy_at_k),
-            max(self.precision_recall_at_k),
-            max(self.map_at_k),
-        )
+        max_k = 0
+        if self.mrr_at_k:  # Only call max() if the list is not empty
+            max_k = max(max_k, max(self.mrr_at_k))
+        if self.ndcg_at_k:
+            max_k = max(max_k, max(self.ndcg_at_k))
+        if self.accuracy_at_k:
+            max_k = max(max_k, max(self.accuracy_at_k))
+        if self.precision_recall_at_k:
+            max_k = max(max_k, max(self.precision_recall_at_k))
+        if self.map_at_k:
+            max_k = max(max_k, max(self.map_at_k))
 
         # Get the device for model
         device = self.device if self.device is not None else next(model.parameters()).device

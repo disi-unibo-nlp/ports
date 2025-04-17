@@ -113,78 +113,124 @@ query_id_dict = dict()
 apis_multi = set()
 
 
-def evaluate_with_retrieval_evaluator(retr_model,
-                                      eval_dataloader,
-                                      eval_triplets,
-                                      corpus_embeddings,
-                                      device: str = "cuda",
-                                      k: int = 3,
-                                      api_corpus: List[str] = None,
-                                      retr_tokenizer: AutoTokenizer = None,
-                                      dataset_name: str = "toole"):
+def evaluate_with_retrieval_evaluator(
+    retr_model,
+    eval_dataloader,
+    eval_triplets,
+    corpus_embeddings,
+    device: str = "cuda",
+    k_values_accuracy: list = [1, 3, 5],
+    k_values_ndcg: list = [1, 3, 5],
+    api_corpus: List[str] = None,
+    retr_tokenizer: AutoTokenizer = None,
+    dataset_name: str = "toole"
+):
     """
     Evaluate using DeviceAwareInformationRetrievalEvaluator.
+    This function is now aligned with the modularity and logging of train_mnrl.py.
     """
     logger.info("Preparing data for DeviceAwareInformationRetrievalEvaluator")
 
-    # Prepare queries and corpus
+    # Build corpus and mapping
+    api_to_doc_id = {api_desc: f"doc_{i}" for i, api_desc in enumerate(api_corpus)}
+    corpus = {doc_id: api_desc for api_desc, doc_id in api_to_doc_id.items()}
+
     queries = {}
     relevant_docs = {}
-    corpus = {str(idx): doc for idx, doc in enumerate(api_corpus)}
+    anchor_to_query_id = {}
+    query_count = 0
 
-    for i, triplet in enumerate(eval_triplets):
-        query_id = f"query_{i}"
-        queries[query_id] = triplet["query"]
-        if dataset_name not in ["apibench", "toolbench"]:
-            pos = triplet["positive"]
-            relevant_docs[query_id] = {str(api_corpus.index(pos))}
+    for triplet in eval_triplets:
+        query = triplet["query"]
+        positive = triplet["positive"]
+        if query not in anchor_to_query_id:
+            query_id = f"q_{query_count}"
+            anchor_to_query_id[query] = query_id
+            queries[query_id] = query
+            relevant_docs[query_id] = set()
+            query_count += 1
         else:
-            relevant_docs[query_id] = {str(api_corpus.index(api)) for api in apis_multi[query_id_dict[triplet["query"]]]}
+            query_id = anchor_to_query_id[query]
+        if positive in api_to_doc_id:
+            pos_doc_id = api_to_doc_id[positive]
+            relevant_docs[query_id].add(pos_doc_id)
+        else:
+            logger.warning(f"Positive API description not found in eval corpus map for query '{query[:50]}...': '{positive[:50]}...'")
 
-    # Initialize evaluator
+    if not queries:
+        logger.error("No queries generated for the evaluator. Check input triplets and corpus.")
+        raise ValueError("Cannot create evaluator with no queries.")
+    if not corpus:
+        logger.error("Corpus is empty. Cannot create evaluator.")
+        raise ValueError("Cannot create evaluator with empty corpus.")
+    if not relevant_docs:
+        logger.warning("Relevant docs mapping is empty. Evaluator might not produce meaningful results.")
+
     evaluator = DeviceAwareInformationRetrievalEvaluator(
         queries=queries,
         corpus=corpus,
         relevant_docs=relevant_docs,
-        mrr_at_k=[k],
-        ndcg_at_k=[1, 3, 5],
-        accuracy_at_k=[1, 3, 5],
+        mrr_at_k=[],
+        ndcg_at_k=k_values_ndcg,
+        accuracy_at_k=k_values_accuracy,
         device=device,
         batch_size=eval_dataloader.batch_size,
         show_progress_bar=True,
         score_functions={"cosine": torch.nn.functional.cosine_similarity}
     )
 
-    # No need to compute query embeddings here, the evaluator will handle it
     logger.info("Running evaluation with DeviceAwareInformationRetrievalEvaluator")
-    
-    # Pass the raw model and corpus_embeddings directly to compute_metrices
-    scores = evaluator.compute_metrices(
-        model=retr_model,
-        corpus_embeddings=corpus_embeddings
-    )
+    scores = evaluator(model=retr_model)
 
-    # Extract and log results
-    ranks = [scores["cosine"]["accuracy@k"][k] * 100 for k in [1, 3, 5]]
-    ndcg_scores = [scores["cosine"]["ndcg@k"][k] for k in [1, 3, 5]]
+    logger.info(f"Score dictionary structure: {list(scores.keys())}")
 
-    logger.info(f"Evaluation Results: R@K: {ranks}, NDCG@K: {ndcg_scores}")
-    return ranks, ndcg_scores
+    # Extract R@K and NDCG@K for compatibility
+    ranks = []
+    ndcg_scores = []
+    for k in k_values_accuracy:
+        val = None
+        if "cosine_accuracy@%d" % k in scores:
+            val = scores[f"cosine_accuracy@{k}"]
+        elif "accuracy@k" in scores.get("cosine", {}):
+            val = scores["cosine"]["accuracy@k"].get(k, None)
+        if val is not None:
+            ranks.append(val * 100)
+        else:
+            ranks.append(0)
+    for k in k_values_ndcg:
+        val = None
+        if "cosine_ndcg@%d" % k in scores:
+            val = scores[f"cosine_ndcg@{k}"]
+        elif "ndcg@k" in scores.get("cosine", {}):
+            val = scores["cosine"]["ndcg@k"].get(k, None)
+        if val is not None:
+            ndcg_scores.append(val)
+        else:
+            ndcg_scores.append(0)
+
+    for k, v in zip(k_values_accuracy, ranks):
+        logger.info(f"R@{k}: {v}")
+    for k, v in zip(k_values_ndcg, ndcg_scores):
+        logger.info(f"NDCG@{k}: {v}")
+
+    logger.info(f"Parsed evaluation results: R@K: {ranks}, NDCG@K: {ndcg_scores}")
+    return ranks, ndcg_scores, scores
 
 
-def run_evaluation(retr_model: AutoModel,
-                   retr_tokenizer: AutoTokenizer,
-                   dataset: Dataset,
-                   eval_api_corpus: List[str],
-                   retriever_max_seq_length: int,
-                   eval_batch_size: int,
-                   preprocessing_batch_size: int,
-                   device: str,
-                   k_eval: int,
-                   dataset_name: str = "toole"):
+def run_evaluation(
+    retr_model: AutoModel,
+    retr_tokenizer: AutoTokenizer,
+    dataset: Dataset,
+    eval_api_corpus: List[str],
+    retriever_max_seq_length: int,
+    eval_batch_size: int,
+    preprocessing_batch_size: int,
+    device: str,
+    k_eval_values_accuracy: list = [1, 3, 5],
+    k_eval_values_ndcg: list = [1, 3, 5],
+    dataset_name: str = "toole"
+):
     retr_model.eval()
-    
-    # create tmp file where to save retr_model weights and then load the Transformer from that path
     logger.info("Saving retr_model to tmp path")
     tmp_model_path = os.path.join("tmp_retr_model")
     retr_model.save_pretrained(tmp_model_path)
@@ -193,19 +239,17 @@ def run_evaluation(retr_model: AutoModel,
     logger.info("Loading retr_model from tmp path")
     transformer = models.Transformer(tmp_model_path)
     embedding_dim = transformer.get_word_embedding_dimension()
-    
+    print(f"RETR_MODEL: {embedding_dim}")
+
     pooling = models.Pooling(
         transformer.get_word_embedding_dimension(),
         pooling_mode_cls_token=True,
-        pooling_mode_mean_tokens=False,       # Ensure mean pooling is disabled
-        pooling_mode_max_tokens=False,        # Ensure max pooling is disabled
-        pooling_mode_mean_sqrt_len_tokens=False  # Ensure mean_sqrt_len pooling is disabled
+        pooling_mode_mean_tokens=False,
+        pooling_mode_max_tokens=False,
+        pooling_mode_mean_sqrt_len_tokens=False
     )
-
     normalize = models.Normalize()
     retr_model = SentenceTransformer(modules=[transformer, pooling, normalize], device=device)
-    print(f"RETR_MODEL: {retr_model.get_sentence_embedding_dimension()}")
-
 
     logger.info("Get Eval DataLoader")
     eval_data_config = {
@@ -217,57 +261,44 @@ def run_evaluation(retr_model: AutoModel,
     }
     eval_triplet_dataloader, eval_triplets = get_eval_dataloader(**eval_data_config)
 
-    logger.info("Embedding Tool Corpus")
-    eval_corpus_embeddings = embed_corpus(retr_model,
-                                           retr_tokenizer,
-                                           eval_api_corpus,
-                                           device,
-                                           batch_size=preprocessing_batch_size,
-                                           max_length=retriever_max_seq_length)
-    eval_corpus_embeddings = eval_corpus_embeddings.to(device)
-
     logger.info("Computing rank accuracy using DeviceAwareInformationRetrievalEvaluator")
-    ranks, ndcg_scores = evaluate_with_retrieval_evaluator(
+    ranks, ndcg_scores, scores = evaluate_with_retrieval_evaluator(
         retr_model,
         eval_triplet_dataloader,
         eval_triplets,
-        eval_corpus_embeddings,
+        None,
         device=device,
-        k=k_eval,
+        k_values_accuracy=k_eval_values_accuracy,
+        k_values_ndcg=k_eval_values_ndcg,
         api_corpus=eval_api_corpus,
         retr_tokenizer=retr_tokenizer,
         dataset_name=dataset_name
     )
 
-    # Print results
-    print("\n")
-    print("EVALUATION")
+    print("\nEVALUATION")
     print("*" * 50)
     print(">>> R@K")
-    for n in range(k_eval):
-        print(f"RANK@{n + 1}: {ranks[n]:.2f}%")
+    for k, rank in zip(k_eval_values_accuracy, ranks):
+        print(f"RANK@{k}: {rank:.2f}%")
     print("-" * 30)
     print(">>> NDCG@K")
-    ndcg_k_values = [1, 3, 5]
-    for n, _k in enumerate(ndcg_k_values):
-        print(f"NDCG@{_k}: {ndcg_scores[n]:.2f}")
+    for k, ndcg in zip(k_eval_values_ndcg, ndcg_scores):
+        print(f"NDCG@{k}: {ndcg:.2f}")
     print("*" * 50)
     print("\n")
 
     log_eval = {}
-    for n in range(k_eval):
-        log_eval[f"RANK@{n + 1}"] = ranks[n]
-
-    for n, _k in enumerate(ndcg_k_values):
-        log_eval[f"NDCG@{_k}"] = ndcg_scores[n]
+    for k, rank in zip(k_eval_values_accuracy, ranks):
+        log_eval[f"RANK@{k}"] = rank
+    for k, ndcg in zip(k_eval_values_ndcg, ndcg_scores):
+        log_eval[f"NDCG@{k}"] = ndcg
 
     # wandb.log(log_eval)
 
     retr_model.train()
-    del eval_corpus_embeddings
     torch.cuda.empty_cache()
 
-    return ranks, ndcg_scores
+    return ranks, ndcg_scores, scores
 
 
 def train(dataset : Dataset,
@@ -291,6 +322,7 @@ def train(dataset : Dataset,
           num_epochs : int = 10,
           learning_rate : float = 1e-4,
           scheduler_type : str = "cosine",
+          warmup_ratio : float = 0.1, # Added warmup_ratio
           retriever_max_seq_length : int = 514,
           inference_max_seq_length : int = 1024,
           number_of_neg_examples : int = 3,
@@ -298,7 +330,8 @@ def train(dataset : Dataset,
           eval_batch_size : int = 2,
           preprocessing_batch_size : int = 4,
           log_freq :  int = 100,
-          k_eval : int = 10,
+          k_eval_values_accuracy: list = [1, 3, 5],
+          k_eval_values_ndcg: list = [1, 3, 5],
           device : str = "cuda",
           wandb_project_name : str = "",
           wandb_run_name : str = "",
@@ -343,7 +376,8 @@ def train(dataset : Dataset,
         "eval_batch_size" : eval_batch_size,
         "preprocessing_batch_size" : preprocessing_batch_size,
         "device" : device,
-        "k_eval" : k_eval,
+        "k_eval_values_accuracy" : k_eval_values_accuracy,
+        "k_eval_values_ndcg" : k_eval_values_ndcg,
         "dataset_name" : dataset_name
     }
     run_evaluation(**eval_config)
@@ -354,10 +388,13 @@ def train(dataset : Dataset,
     ds_length = len(dataset["train"])
     n_iters = ds_length / train_batch_size + ds_length % train_batch_size
     num_training_steps = num_epochs * n_iters #len(triplet_dataloader)
+    num_warmup_steps = int(num_training_steps * warmup_ratio) # Calculate warmup steps
+    logger.info(f"Total training steps: {num_training_steps}, Warmup steps: {num_warmup_steps} ({warmup_ratio*100}%)")
+
     lr_scheduler = get_scheduler(
         scheduler_type,
         optimizer=optimizer,
-        num_warmup_steps=0,
+        num_warmup_steps=num_warmup_steps, # Use calculated warmup steps
         num_training_steps=num_training_steps,
     )
 
@@ -626,7 +663,8 @@ def train(dataset : Dataset,
                         "eval_batch_size" : eval_batch_size,
                         "preprocessing_batch_size" : preprocessing_batch_size,
                         "device" : device,
-                        "k_eval" : k_eval,
+                        "k_eval_values_accuracy" : k_eval_values_accuracy,
+                        "k_eval_values_ndcg" : k_eval_values_ndcg,
                         "dataset_name" : dataset_name
                     }
                     run_evaluation(**eval_config)
@@ -666,7 +704,8 @@ def train(dataset : Dataset,
                 "eval_batch_size" : eval_batch_size,
                 "preprocessing_batch_size" : preprocessing_batch_size,
                 "device" : device,
-                "k_eval" : k_eval,
+                "k_eval_values_accuracy" : k_eval_values_accuracy,
+                "k_eval_values_ndcg" : k_eval_values_ndcg,
                 "dataset_name" : dataset_name
             }
             ranks, ndcg_scores = run_evaluation(**eval_config)
@@ -709,7 +748,8 @@ def main():
 
     parser.add_argument('--n_epochs', type=int, default=10, help="Number of training epochs")
     parser.add_argument('--lr', type=float, default=1e-4, help="Learning rate")
-    parser.add_argument('--lr_type', type=str, default="cosing", help="Learning rate scheduler approach")
+    parser.add_argument('--lr_type', type=str, default="cosine", help="Learning rate scheduler approach")
+    parser.add_argument('--warmup_ratio', type=float, default=0.1, help="Fraction of total training steps for warmup (0.0 to 1.0)")
     parser.add_argument('--train_batch_size', type=int,default=2, help="Batch size for training")
     parser.add_argument('--eval_batch_size', type=int, default=2, help="Batch size for evaluation")
     parser.add_argument('--preprocessing_batch_size', type=int, default=4, help="Batch size for the preprocessing phase")
@@ -719,7 +759,10 @@ def main():
     parser.add_argument('--lambda_loss', type=float, default=0.2, help="Lambda weighting factor parameter")
     
     parser.add_argument('--n_neg_examples', type=int, default=3, help="Number of negative samples to include in the triplets")
-    parser.add_argument('--k_eval', type=int, default=10, help="Number of R@K value to test during evaluation")
+    parser.add_argument("--k_eval_values_accuracy", nargs="+", type=int, default=[1, 3, 5],
+                        help="Values of k for accuracy@k evaluation metrics")
+    parser.add_argument("--k_eval_values_ndcg", nargs="+", type=int, default=[1, 3, 5],
+                        help="Values of k for ndcg@k evaluation metrics")
     parser.add_argument('--gamma', type=float, default=1, help="Gamma parameter for computing Pr_retr")
     parser.add_argument('--beta', type=float, default=1, help="Beta parameter for softmax in Q computation")
     parser.add_argument('--preference_weight', type=float, default=0.1, help="Weighting factor for the preference ratio")
@@ -801,7 +844,7 @@ def main():
 
     dataset = dataset_downloader.post_process_answers(dataset)
 
-    # Sample from dataset if necessary
+    # Sample from dataset if necessary - do this BEFORE creating API corpora
     if args.max_train_samples:
         n_inst = min(args.max_train_samples, len(dataset["train"]))
         selected_indices = random.sample(range(len(dataset["train"])), n_inst)
@@ -812,20 +855,16 @@ def main():
         selected_indices = random.sample(range(len(dataset["test"])), n_inst)
         dataset["test"] = dataset["test"].select(selected_indices)
 
-    
     logger.info(">>> DATASET")
     print(dataset)
 
-    # > Create and embed corpora of functions
+    # > Create tool corpora from the already filtered dataset
     logger.info("Defining tool corpora")
     
-    # TODO: add if do_train ...
     train_api_corpus = list(set(dataset["train"]["api_description"]))
     eval_api_corpus = list(set(dataset["test"]["api_description"]))
 
     logger.info(f"[STAST] Corpus--> Train: {len(train_api_corpus)} | Eval: {len(eval_api_corpus)}")
-
-    k_eval = min(args.k_eval,len(eval_api_corpus))
 
     logger.info("Setting the prompt and answer templates")
     prompt_template = PROMPT_TEMPLATES[pseudo_model_name]
@@ -870,8 +909,10 @@ def main():
         "preprocessing_batch_size" : args.preprocessing_batch_size,
         "learning_rate" : args.lr,
         "scheduler_type" : args.lr_type,
+        "warmup_ratio" : args.warmup_ratio,
         "log_freq" :  args.log_freq,
-        "k_eval" : k_eval,
+        "k_eval_values_accuracy" : args.k_eval_values_accuracy,
+        "k_eval_values_ndcg" : args.k_eval_values_ndcg,
         "device" : device,
         "wandb_project_name" : args.wandb_project_name,
         "wandb_run_name" : args.wandb_run_name,

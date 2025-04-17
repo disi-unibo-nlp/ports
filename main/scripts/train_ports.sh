@@ -1,89 +1,90 @@
 #!/bin/bash
 
-SEED=42
+set -e
 
+# Default values (aligned with Makefile and other scripts)
+DATASET_NAME="${DATASET_NAME:-toolbench}"
+RETRIEVAL_MODEL_NAME="${RETRIEVAL_MODEL_NAME:-BAAI/bge-base-en-v1.5}"
+INFERENCE_MODEL_PSEUDONAME="${INFERENCE_MODEL_PSEUDONAME:-llama3-8B}"
+RETRIEVAL_MAX_SEQ_LEN="${RETRIEVAL_MAX_SEQ_LEN:-512}"
+INFERENCE_MAX_SEQ_LEN="${INFERENCE_MAX_SEQ_LEN:-1024}"
+PADDING_SIDE="${PADDING_SIDE:-left}"
+N_NEGS="${N_NEGS:-3}"
+LR="${LR:-1e-5}"
+LR_SCHEDULER="${LR_SCHEDULER:-cosine}"
+TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-2}"
+EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-4}"
+PREPROCESS_BATCH_SIZE="${PREPROCESS_BATCH_SIZE:-16}"
+LAMBDA_WEIGHT="${LAMBDA_WEIGHT:-0.3}"
+MAX_EVAL_SAMPLES="${MAX_EVAL_SAMPLES:-200}"
+WANDB_PROJECT_NAME="${WANDB_PROJECT_NAME:-PORTS_AAAI-EMNLP}"
+LOG_FREQ="${LOG_FREQ:-20}"
+BETA="${BETA:-0.5}"
+GAMMA="${GAMMA:-0.5}"
+PREF_BETA="${PREF_BETA:-1}"
+CORPUS_UPDATES="${CORPUS_UPDATES:-100}"
+N_EPOCHS="${N_EPOCHS:-5}"
+SEED="${SEED:-42}"
+EVAL_STEPS="${EVAL_STEPS:-0.2}"
+LOAD_IN_4BIT="${LOAD_IN_4BIT:-true}"
+MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-1000}"
+WARMUP_RATIO="${WARMUP_RATIO:-0.1}"
+SAVE_STRATEGY="${SAVE_STRATEGY:-epoch}"
+SAVE_STEPS="${SAVE_STEPS:-}"
+SAVE_DIR="${SAVE_DIR:-/home/molfetta/ports/main/output/ports/ports_retriever_$(date +%Y%m%d_%H%M%S)}" # Default SAVE_DIR if not set
+MAX_CHECKPOINTS="${MAX_CHECKPOINTS:-}"
+K_EVAL_VALUES_ACCURACY="${K_EVAL_VALUES_ACCURACY:-1 3 5}"
+K_EVAL_VALUES_NDCG="${K_EVAL_VALUES_NDCG:-1 3 5}"
 
-# "llama3-8B" : "meta-llama/Meta-Llama-3-8B-Instruct",
-# 'codestral-22B' : "mistralai/Codestral-22B-v0.1",
-# 'gemma2-2B' : "google/gemma-2-2b-it",
-# 'groqLlama3Tool-8B' : "Groq/Llama-3-Groq-8B-Tool-Use"
+WANDB_RUN_NAME="${WANDB_RUN_NAME:-${DATASET_NAME}-${RETRIEVAL_MODEL_NAME}-${INFERENCE_MODEL_PSEUDONAME}-B${BETA}-G${GAMMA}-ORPOB${PREF_BETA}-LR${LR}}"
 
+# Ensure the save directory exists
+mkdir -p "$SAVE_DIR"
 
-RETRIEVAL_MAX_SEQ_LEN=512
+SAVE_ARGS=""
+if [ -n "$SAVE_STEPS" ]; then
+  SAVE_ARGS="--save_steps $SAVE_STEPS"
+fi
+MAX_CHECKPOINTS_ARGS=""
+if [ -n "$MAX_CHECKPOINTS" ]; then
+  MAX_CHECKPOINTS_ARGS="--max_checkpoints $MAX_CHECKPOINTS"
+fi
 
-INFERENCE_MAX_SEQ_LEN=1024
-PADDING_SIDE="left"
+PYTHON_SCRIPT="/workspace/main/main_train_port.py"
 
-# Data
-N_NEGS=3
-
-LR="1e-5"
-LR_SCHEDULER="cosine"
-
-TRAIN_BATCH_SIZE=2
-EVAL_BATCH_SIZE=4
-PREPROCESS_BATCH_SIZE=16
-
-# Loss config
-LAMBDA_WEIGHT=0.3
-
-# Eval config
-K_ACC_UPPER=3
-
-
-MAX_EVAL_SAMPLES=200
-
-WANDB_PROJECT_NAME="PORTS_AAAI-EMNLP"
-
-LOG_FREQ=20
-
-
-BETA=0.5
-GAMMA=0.5
-PREF_BETA=1
-
-CORPUS_UPDATES=100
-
-# Train Config
-N_EPOCHS=5
-
-
-# for INFERENCE_MODEL_PSEUDONAME in ${MODELS[@]}; do
-INFERENCE_MODEL_PSEUDONAME="llama3-8B" # "gemma2-2B" # "codestral-22B" # "groqLlama3Tool-8B" # "llama3-8B"
-
-#LOW_RES_DATASETS=("apibench" "toolbench" "toole-overlap" "toole" "apibank" "bfcl" "octopus" "octopus-overlap")
-DATASET_NAME="toolbench"
-
-# RETR_MODELS=("FacebookAI/roberta-base" "BAAI/bge-base-en-v1.5")
-RETRIEVAL_MODEL_NAME="BAAI/bge-base-en-v1.5"
-
-WANDB_RUN_NAME="${DATASET_NAME}-${RETRIEVAL_MODEL_NAME}-${INFERENCE_MODEL_PSEUDONAME}-B${BETA}-G${GAMMA}-ORPOB${PREF_BETA}-LR${LR}"
-
-python3 main_train_port.py --dataset $DATASET_NAME \
-                            --inference_model_name $INFERENCE_MODEL_PSEUDONAME \
-                            --retrieval_model_name $RETRIEVAL_MODEL_NAME \
-                            --retriever_max_seq_length $RETRIEVAL_MAX_SEQ_LEN \
-                            --inference_max_seq_length $INFERENCE_MAX_SEQ_LEN \
-                            --n_epochs $N_EPOCHS \
-                            --lr $LR \
-                            --lr_type $LR_SCHEDULER \
-                            --train_batch_size $TRAIN_BATCH_SIZE \
-                            --eval_batch_size $EVAL_BATCH_SIZE \
-                            --preprocessing_batch_size $PREPROCESS_BATCH_SIZE \
-                            --n_reembedding_steps $CORPUS_UPDATES \
-                            --padding_side $PADDING_SIDE \
-                            --lambda_loss $LAMBDA_WEIGHT \
-                            --n_neg_examples $N_NEGS \
-                            --k_eval $K_ACC_UPPER \
-                            --gamma $GAMMA \
-                            --beta $BETA \
-                            --preference_weight $PREF_BETA \
-                            --seed $SEED \
-                            --wandb_project_name $WANDB_PROJECT_NAME \
-                            --wandb_run_name $WANDB_RUN_NAME \
-                            --log_freq $LOG_FREQ \
-                            --do_train \
-                            --do_eval \
-                            --eval_strategy "steps" \
-                            --eval_steps 0.2 \
-                            --load_in_4bit
+python3 $PYTHON_SCRIPT \
+    --dataset $DATASET_NAME \
+    --inference_model_name $INFERENCE_MODEL_PSEUDONAME \
+    --retrieval_model_name $RETRIEVAL_MODEL_NAME \
+    --retriever_max_seq_length $RETRIEVAL_MAX_SEQ_LEN \
+    --inference_max_seq_length $INFERENCE_MAX_SEQ_LEN \
+    --n_epochs $N_EPOCHS \
+    --lr $LR \
+    --lr_type $LR_SCHEDULER \
+    --train_batch_size $TRAIN_BATCH_SIZE \
+    --eval_batch_size $EVAL_BATCH_SIZE \
+    --preprocessing_batch_size $PREPROCESS_BATCH_SIZE \
+    --n_reembedding_steps $CORPUS_UPDATES \
+    --padding_side $PADDING_SIDE \
+    --lambda_loss $LAMBDA_WEIGHT \
+    --n_neg_examples $N_NEGS \
+    --gamma $GAMMA \
+    --beta $BETA \
+    --preference_weight $PREF_BETA \
+    --seed $SEED \
+    --wandb_project_name $WANDB_PROJECT_NAME \
+    --wandb_run_name $WANDB_RUN_NAME \
+    --log_freq $LOG_FREQ \
+    --do_train \
+    --do_eval \
+    --eval_strategy "steps" \
+    --eval_steps $EVAL_STEPS \
+    --warmup_ratio $WARMUP_RATIO \
+    --save_strategy $SAVE_STRATEGY \
+    --save_dir "$SAVE_DIR" \
+    $SAVE_ARGS \
+    $MAX_CHECKPOINTS_ARGS \
+    --k_eval_values_accuracy $K_EVAL_VALUES_ACCURACY \
+    --k_eval_values_ndcg $K_EVAL_VALUES_NDCG \
+    --load_in_4bit \
+    --max_train_samples $MAX_TRAIN_SAMPLES

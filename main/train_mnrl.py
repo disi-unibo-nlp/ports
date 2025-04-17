@@ -16,6 +16,7 @@ from typing import Dict, Set, List, Optional, Callable, Any, Tuple
 import traceback
 import pretty_errors
 import random
+import math
 
 import torch
 import wandb
@@ -174,7 +175,9 @@ def log_to_wandb(score_dict: dict,
 def create_api_evaluator(triplets: List[Tuple[str, str, str]],
                          eval_api_corpus: List[str],
                          batch_size: int = 16,
-                         name: str = 'eval') -> DeviceAwareInformationRetrievalEvaluator:
+                         name: str = 'eval',
+                         k_values_accuracy: list = [1, 3, 5, 10],
+                         k_values_ndcg: list = [1, 3, 5, 10]) -> DeviceAwareInformationRetrievalEvaluator:
     queries = {}
     corpus = {}
     relevant_docs = {}
@@ -219,8 +222,8 @@ def create_api_evaluator(triplets: List[Tuple[str, str, str]],
         batch_size=batch_size,
         name=name,
         show_progress_bar=(len(queries) > 10),
-        ndcg_at_k=[1, 3, 5, 10],
-        accuracy_at_k=[1, 3, 5, 10]
+        ndcg_at_k=k_values_ndcg,
+        accuracy_at_k=k_values_accuracy
     )
 
     logger.info(f"Created evaluator '{name}' with {len(queries)} queries, {len(corpus)} corpus docs.")
@@ -231,7 +234,9 @@ def evaluate_on_test(model,
                      test_triplets,
                      eval_api_corpus,
                      output_dir,
-                     batch_size: int = 16) -> dict:
+                     batch_size: int = 16,
+                     k_values_accuracy: list = [1, 3, 5, 10],
+                     k_values_ndcg: list = [1, 3, 5, 10]) -> dict:
     logger.info(f"Evaluating model on {len(test_triplets)} test triplets")
 
     if not test_triplets:
@@ -245,7 +250,9 @@ def evaluate_on_test(model,
         test_evaluator = create_api_evaluator(test_triplets,
                                               eval_api_corpus,
                                               batch_size=batch_size,
-                                              name='test')
+                                              name='test',
+                                              k_values_accuracy=k_values_accuracy,
+                                              k_values_ndcg=k_values_ndcg)
     except ValueError as e:
         logger.error(f"Failed to create test evaluator: {e}")
         return {}
@@ -451,12 +458,19 @@ def main(args):
         train_loss = losses.MultipleNegativesRankingLoss(model=model)
 
         logger.info("Creating evaluation setup")
+        
+        # Define k values for evaluation
+        k_values_accuracy = getattr(args, 'k_eval_values_accuracy', [1, 3, 5, 10])
+        k_values_ndcg = getattr(args, 'k_eval_values_ndcg', [1, 3, 5, 10])
+
         if dev_triplets and eval_api_corpus:
             try:
                 ir_evaluator = create_api_evaluator(dev_triplets,
                                                     eval_api_corpus,
                                                     batch_size=args.eval_batch_size,
-                                                    name='dev')
+                                                    name='dev',
+                                                    k_values_accuracy=k_values_accuracy,
+                                                    k_values_ndcg=k_values_ndcg)
             except ValueError as e:
                 logger.error(f"Failed to create development evaluator: {e}. Proceeding without evaluation.")
                 ir_evaluator = None
@@ -469,6 +483,10 @@ def main(args):
         # Calculate evaluation steps based on fraction if provided
         evaluation_step_interval = 0 # Default: evaluate per epoch
         steps_per_epoch = len(train_dataloader)
+        num_training_steps = steps_per_epoch * num_epochs
+        num_warmup_steps = math.ceil(num_training_steps * args.warmup_ratio) # Use math.ceil for integer steps
+        logger.info(f"Total training steps: {num_training_steps}, Warmup steps: {num_warmup_steps} ({args.warmup_ratio*100}%)")
+
         if ir_evaluator and args.eval_steps is not None and args.eval_steps > 0:
              if not (0 < args.eval_steps <= 1):
                  raise ValueError("eval_steps must be a float between 0 (exclusive) and 1 (inclusive)")
@@ -543,7 +561,7 @@ def main(args):
             model.fit(
                 train_objectives=[(train_dataloader, train_loss)],
                 epochs=num_epochs,
-                warmup_steps=args.warmup_steps,
+                warmup_steps=num_warmup_steps, # Use calculated warmup steps
                 evaluator=ir_evaluator,
                 evaluation_steps=evaluation_step_interval, # Use calculated interval
                 callback=callback_func,
@@ -615,7 +633,13 @@ def main(args):
                 eval_model = None
 
             if eval_model:
-                test_stats = evaluate_on_test(eval_model, test_triplets, eval_api_corpus, model_save_path, batch_size=args.eval_batch_size)
+                test_stats = evaluate_on_test(eval_model, 
+                                              test_triplets, 
+                                              eval_api_corpus, 
+                                              model_save_path, 
+                                              batch_size=args.eval_batch_size,
+                                              k_values_accuracy=k_values_accuracy,
+                                              k_values_ndcg=k_values_ndcg)
 
                 if args.do_eval_only and not args.disable_wandb and not wandb_run:
                     run_name = f"Test-{args.model_name.split('/')[-1]}-{args.dataset}-{datetime.now().strftime('%Y%m%d-%H%M')}"
@@ -677,8 +701,8 @@ if __name__ == '__main__':
                         help="Batch size for preprocessing steps like embedding corpus (if applicable)")
     parser.add_argument("--epochs", default=3, type=int,
                         help="Number of training epochs")
-    parser.add_argument("--warmup_steps", default=100, type=int,
-                        help="Number of warmup steps")
+    parser.add_argument("--warmup_ratio", default=0.1, type=float,
+                        help="Fraction of total training steps for warmup (0.0 to 1.0)")
     parser.add_argument("--lr", default=2e-5, type=float,
                         help="Learning rate")
     parser.add_argument("--eval_steps", default=None, type=float,
@@ -708,6 +732,12 @@ if __name__ == '__main__':
                         help="Path to log file (if not set, only console logging is used)")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for reproducibility")
+
+    # Add k_eval parameters
+    parser.add_argument("--k_eval_values_accuracy", nargs="+", type=int, default=[1, 3, 5, 10],
+                        help="Values of k for accuracy@k evaluation metrics")
+    parser.add_argument("--k_eval_values_ndcg", nargs="+", type=int, default=[1, 3, 5, 10],
+                        help="Values of k for ndcg@k evaluation metrics")
 
     args = parser.parse_args()
 

@@ -88,6 +88,10 @@ def main():
 
     eval_steps_fraction = getattr(args, 'eval_steps', None)
 
+    # Get k_eval values for evaluation
+    k_values_accuracy = getattr(args, 'k_eval_values_accuracy', [1, 3, 5])
+    k_values_ndcg = getattr(args, 'k_eval_values_ndcg', [1, 3, 5])
+
     if log_wandb:
         wandb_key = os.getenv('WANDB_KEY')
         name = args.wandb_proj_name
@@ -147,6 +151,12 @@ def main():
 
     dataset = dataset.shuffle(seed=42).flatten_indices()
 
+    # Handle max_train_samples like in main_train_port.py
+    if getattr(args, "max_train_samples", None):
+        n_inst = min(args.max_train_samples, len(dataset["train"]))
+        selected_indices = np.random.choice(len(dataset["train"]), n_inst, replace=False)
+        dataset["train"] = dataset["train"].select(selected_indices)
+
     query_column = args.query_column
     response_column = args.response_column
     train_documents = list(set(dataset["train"]["api_description"]))
@@ -182,10 +192,14 @@ def main():
 
     optimizer = AdamW(retr_model_base.parameters(), lr=args.learning_rate)
     num_training_steps = num_epochs * len(train_data_loader)
+    warmup_ratio = getattr(args, 'warmup_ratio', 0.1) # Get warmup_ratio, default 0.1
+    num_warmup_steps = int(num_training_steps * warmup_ratio) # Calculate warmup steps
+    logger.info(f"Total training steps: {num_training_steps}, Warmup steps: {num_warmup_steps} ({warmup_ratio*100}%)")
+
     lr_scheduler = get_scheduler(
         args.lr_scheduler,
         optimizer=optimizer,
-        num_warmup_steps=0,
+        num_warmup_steps=num_warmup_steps, # Use calculated warmup steps
         num_training_steps=num_training_steps,
     )
     cross_entropy = CrossEntropyLoss(reduction='none')
@@ -385,8 +399,8 @@ def main():
         eval_api_corpus=eval_documents,
         corpus_embeddings=embedded_eval_documents,
         device="cuda",
-        k_values_accuracy=[1, 3, 5],
-        k_values_ndcg=[1, 3, 5],
+        k_values_accuracy=k_values_accuracy,
+        k_values_ndcg=k_values_ndcg,
         eval_batch_size=args.batch_size
     )
     del embedded_eval_documents, retr_model_eval_instance
@@ -468,8 +482,8 @@ def main():
                     eval_api_corpus=eval_documents,
                     corpus_embeddings=embedded_eval_documents,
                     device="cuda",
-                    k_values_accuracy=[1, 3, 5],
-                    k_values_ndcg=[1, 3, 5],
+                    k_values_accuracy=k_values_accuracy,
+                    k_values_ndcg=k_values_ndcg,
                     eval_batch_size=args.batch_size
                 )
                 retr_model_base.train()
@@ -494,8 +508,8 @@ def main():
                 eval_api_corpus=eval_documents,
                 corpus_embeddings=embedded_eval_documents,
                 device="cuda",
-                k_values_accuracy=[1, 3, 5],
-                k_values_ndcg=[1, 3, 5],
+                k_values_accuracy=k_values_accuracy,
+                k_values_ndcg=k_values_ndcg,
                 eval_batch_size=args.batch_size
             )
             retr_model_base.train()

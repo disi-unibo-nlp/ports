@@ -1,48 +1,36 @@
 #!/bin/bash
 
-# Exit immediately if a command exits with a non-zero status.
 set -e
 
-# --- Configuration based on train_ports.sh ---
-SEED=42
-DATASET_NAME="bfcl" # Options: "bfcl", "apibank", "toolbench", "toole", "octopus", etc.
-MODEL_NAME="BAAI/bge-base-en-v1.5" # Options: "sentence-transformers/all-MiniLM-L6-v2", "BAAI/bge-base-en-v1.5", etc.
+# Default values (aligned with Makefile and train_ports.sh)
+DATASET_NAME="${DATASET_NAME:-toolbench}"
+MODEL_NAME="${MODEL_NAME:-BAAI/bge-base-en-v1.5}"
+EPOCHS="${EPOCHS:-5}"
+TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-32}"
+EVAL_BATCH_SIZE="${EVAL_BATCH_SIZE:-16}"
+PREPROCESSING_BATCH_SIZE="${PREPROCESSING_BATCH_SIZE:-16}"
+LR="${LR:-2e-5}"
+MAX_SEQ_LENGTH="${MAX_SEQ_LENGTH:-512}"
+EVAL_STEPS_FRACTION="${EVAL_STEPS_FRACTION:-0.2}"
+WARMUP_RATIO="${WARMUP_RATIO:-0.1}"
+SCHEDULER="${SCHEDULER:-warmupcosine}"
+POOLING="${POOLING:-mean}"
+NEGATIVES_PER_SAMPLE="${NEGATIVES_PER_SAMPLE:-1}"
+SEED="${SEED:-42}"
+MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-1000}"
+K_EVAL_VALUES_ACCURACY="${K_EVAL_VALUES_ACCURACY:-1 3 5 10}"
+K_EVAL_VALUES_NDCG="${K_EVAL_VALUES_NDCG:-1 3 5 10}"
 
-EPOCHS=5
-TRAIN_BATCH_SIZE=32 # Adjusted for MNRL, potentially higher than PORT
-EVAL_BATCH_SIZE=16
-PREPROCESSING_BATCH_SIZE=16 # Added for consistency, though less critical for MNRL script structure
-LR="2e-5" # Common default for SBERT fine-tuning
-MAX_SEQ_LENGTH=512 # Aligned with RETRIEVAL_MAX_SEQ_LEN in train_ports.sh
-EVAL_STEPS_FRACTION=0.2 # Evaluate every 20% of steps within an epoch
-WARMUP_STEPS=100 # Common default for SBERT
-SCHEDULER="warmupcosine"
-POOLING="mean" # Common default, can be "cls" or "max"
-NEGATIVES_PER_SAMPLE=1 # Default for MNRL, adjust if needed
+WANDB_PROJECT_NAME="${WANDB_PROJECT_NAME:-MNRL_Training}"
+WANDB_RUN_NAME="${WANDB_RUN_NAME:-MNRL-${DATASET_NAME}-$(basename ${MODEL_NAME})-LR${LR}-E${EPOCHS}}"
+OUTPUT_DIR="${OUTPUT_DIR:-/home/molfetta/ports/main/output/mnrl/mnrl_retriever_${DATASET_NAME}_$(basename ${MODEL_NAME})_$(date +%Y%m%d_%H%M%S)}"
 
-WANDB_PROJECT_NAME="MNRL_Training" # Specific project for MNRL runs
-WANDB_RUN_NAME="MNRL-${DATASET_NAME}-$(basename ${MODEL_NAME})-LR${LR}-E${EPOCHS}"
+# Ensure the output directory exists
+mkdir -p "$OUTPUT_DIR"
 
-OUTPUT_DIR="/home/molfetta/ports/main/output/mnrl_retriever_${DATASET_NAME}_$(basename ${MODEL_NAME})_$(date +%Y%m%d_%H%M%S)"
-# --- End Configuration ---
+PYTHON_SCRIPT="/workspace/main/train_mnrl.py"
 
-# Define the Python script path
-PYTHON_SCRIPT="/home/molfetta/ports/main/src_dml/train_mnrl.py"
-
-# Create output directory
-mkdir -p $OUTPUT_DIR
-
-# Run the training script
-echo "Starting MNRL training..."
-echo "Dataset: $DATASET_NAME"
-echo "Model: $MODEL_NAME"
-echo "Output Dir: $OUTPUT_DIR"
-echo "Eval Steps Fraction: $EVAL_STEPS_FRACTION"
-
-# Note: W&B logging is handled internally by the script if not disabled
-# The script uses wandb.init based on its arguments
-
-python $PYTHON_SCRIPT \
+python3 $PYTHON_SCRIPT \
     --dataset "$DATASET_NAME" \
     --model_name "$MODEL_NAME" \
     --output_dir "$OUTPUT_DIR" \
@@ -54,9 +42,11 @@ python $PYTHON_SCRIPT \
     --lr $LR \
     --scheduler "$SCHEDULER" \
     --pooling "$POOLING" \
-    --warmup_steps $WARMUP_STEPS \
+    --warmup_ratio $WARMUP_RATIO \
     --eval_steps $EVAL_STEPS_FRACTION \
     --negatives_per_sample $NEGATIVES_PER_SAMPLE \
+    --k_eval_values_accuracy $K_EVAL_VALUES_ACCURACY \
+    --k_eval_values_ndcg $K_EVAL_VALUES_NDCG \
     --random_negatives \
     --evaluate_on_test \
     --use_pre_trained_model \
@@ -65,8 +55,4 @@ python $PYTHON_SCRIPT \
     --hub_repo_name "mnrl-${DATASET_NAME}-$(basename ${MODEL_NAME})" \
     --log_file "$OUTPUT_DIR/training.log" \
     --seed $SEED \
-    # --disable_wandb # Uncomment to disable W&B logging
-    # --max_train_samples 10000 # Uncomment to limit training samples
-
-echo "Training finished."
-echo "Model and logs saved in: $OUTPUT_DIR"
+    --max_train_samples $MAX_TRAIN_SAMPLES

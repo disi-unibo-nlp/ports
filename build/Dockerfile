@@ -28,5 +28,9 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 
 RUN pip3 install flash_attn==2.7.4.post1
 
+COPY . /workspace/
+
+ENTRYPOINT [ "make", "-f", "/workspace/Makefile" ]
+
 # Back to default frontend
 ENV DEBIAN_FRONTEND=dialog

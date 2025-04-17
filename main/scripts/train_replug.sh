@@ -1,15 +1,32 @@
 #!/bin/bash
 
-# Exit immediately if a command exits with a non-zero status.
 set -e
 
-# --- Configuration based on train_ports.sh ---
-SEED=42
-
-# Models (Map pseudo-names to actual paths/IDs used by train_replug.py)
-# Note: train_replug.py uses args like retr_model_name_or_path, infer_model_name_or_path, infer_model_type
-RETRIEVAL_MODEL_NAME="BAAI/bge-base-en-v1.5"
-INFERENCE_MODEL_PSEUDONAME="llama3-8B" # Options: "llama3-8B", "codestral-22B", "gemma2-2B", "groqLlama3Tool-8B"
+# Default values (aligned with Makefile and train_ports.sh)
+DATASET_NAME="${DATASET_NAME:-toolbench}"
+DATASET_PATH="ToolRetriever/${DATASET_NAME}"
+RETRIEVAL_MODEL_NAME="${RETRIEVAL_MODEL_NAME:-BAAI/bge-base-en-v1.5}"
+INFERENCE_MODEL_PSEUDONAME="${INFERENCE_MODEL_PSEUDONAME:-llama3-8B}"
+RETRIEVAL_MAX_SEQ_LEN="${RETRIEVAL_MAX_SEQ_LEN:-512}"
+TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-2}"
+LR="${LR:-1e-5}"
+LR_SCHEDULER="${LR_SCHEDULER:-cosine}"
+EPOCHS="${EPOCHS:-5}"
+NUM_RETRIEVED_DOCS="${NUM_RETRIEVED_DOCS:-5}"
+GAMMA="${GAMMA:-0.5}"
+BETA="${BETA:-0.5}"
+EVAL_STEPS_FRACTION="${EVAL_STEPS_FRACTION:-0.2}"
+SEED="${SEED:-42}"
+LOAD_IN_4BIT="${LOAD_IN_4BIT:-true}"
+MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-1000}"
+WARMUP_RATIO="${WARMUP_RATIO:-0.1}" # Added WARMUP_RATIO
+QUERY_COLUMN="${QUERY_COLUMN:-query_for_retrieval}"
+RESPONSE_COLUMN="${RESPONSE_COLUMN:-answer}"
+WANDB_PROJECT_NAME="${WANDB_PROJECT_NAME:-REPLUG_Training}"
+WANDB_RUN_NAME="${WANDB_RUN_NAME:-REPLUG-${DATASET_NAME}-R_$(basename ${RETRIEVAL_MODEL_NAME})-I_${INFERENCE_MODEL_PSEUDONAME}-LR${LR}}"
+SAVE_PATH="${SAVE_PATH:-/home/molfetta/ports/main/output/replug/replug_retriever_${DATASET_NAME}_$(basename ${RETRIEVAL_MODEL_NAME})_$(date +%Y%m%d_%H%M%S)}" # Default SAVE_PATH if not set
+K_EVAL_VALUES_ACCURACY="${K_EVAL_VALUES_ACCURACY:-1 3 5}"
+K_EVAL_VALUES_NDCG="${K_EVAL_VALUES_NDCG:-1 3 5}"
 
 # Map pseudo-name to actual model path/ID and type
 case $INFERENCE_MODEL_PSEUDONAME in
@@ -19,15 +36,15 @@ case $INFERENCE_MODEL_PSEUDONAME in
     ;;
   "codestral-22B")
     INFERENCE_MODEL_NAME="mistralai/Codestral-22B-v0.1"
-    INFERENCE_MODEL_TYPE="codestral" # Assuming 'codestral' is a valid type in PROMPT_TEMPLATES
+    INFERENCE_MODEL_TYPE="codestral"
     ;;
   "gemma2-2B")
     INFERENCE_MODEL_NAME="google/gemma-2-2b-it"
-    INFERENCE_MODEL_TYPE="gemma" # Assuming 'gemma' is a valid type
+    INFERENCE_MODEL_TYPE="gemma"
     ;;
   "groqLlama3Tool-8B")
     INFERENCE_MODEL_NAME="Groq/Llama-3-Groq-8B-Tool-Use"
-    INFERENCE_MODEL_TYPE="llama3groq" # Assuming 'llama3groq' is a valid type
+    INFERENCE_MODEL_TYPE="llama3groq"
     ;;
   *)
     echo "Error: Unknown inference model pseudo-name: $INFERENCE_MODEL_PSEUDONAME"
@@ -35,64 +52,17 @@ case $INFERENCE_MODEL_PSEUDONAME in
     ;;
 esac
 
-RETRIEVAL_MAX_SEQ_LEN=512 # Should match retriever capability
-# INFERENCE_MAX_SEQ_LEN is not directly used as arg in train_replug.py, but implied by model
-
-# Data & Training Params
-DATASET_PATH="ToolRetriever/ToolBench" # Example: "ToolRetriever/ToolBench", "ToolRetriever/BFCL", "ToolRetriever/APIBench"
-QUERY_COLUMN="query_for_retrieval" # Adjust based on dataset
-RESPONSE_COLUMN="answer" # Adjust based on dataset
-
-LR="1e-5"
-LR_SCHEDULER="cosine" # Options: "cosine", "linear", etc. (matching get_scheduler)
-
-TRAIN_BATCH_SIZE=2 # Keep low due to inference model memory usage
-# EVAL_BATCH_SIZE is handled internally by evaluator in train_replug.py
-
-EPOCHS=5
-NUM_RETRIEVED_DOCS=5 # 'k' in train_replug.py
-
-# Loss config (REPLUG specific)
-GAMMA=0.5 # Temperature for Pr softmax
-BETA=0.5  # Temperature for Q softmax
-
-# Eval config
-EVAL_STEPS_FRACTION=0.2 # Evaluate every 20% of steps
-
-# W&B
-WANDB_PROJECT_NAME="REPLUG_Training" # Specific project for REPLUG runs
-WANDB_RUN_NAME="REPLUG-$(basename ${DATASET_PATH})-R_$(basename ${RETRIEVAL_MODEL_NAME})-I_${INFERENCE_MODEL_PSEUDONAME}-LR${LR}"
-
-# Output
-SAVE_PATH="/home/molfetta/ports/main/output/replug_retriever_${DATASET_NAME}_$(basename ${RETRIEVAL_MODEL_NAME})_$(date +%Y%m%d_%H%M%S)"
-
-# Quantization
-LOAD_IN_4BIT="true" # Corresponds to --load_in_4bit in train_ports.sh -> --quantization_4bit in train_replug.py
-
-# --- End Configuration ---
-
-# Define the Python script path
-PYTHON_SCRIPT="/home/molfetta/ports/main/train_replug.py"
-
-# Create output directory if save path is specified and used for saving
-mkdir -p $SAVE_PATH
-
-# Run the training script
-echo "Starting REPLUG training..."
-echo "Dataset Path: $DATASET_PATH"
-echo "Retrieval Model: $RETRIEVAL_MODEL_NAME"
-echo "Inference Model: $INFERENCE_MODEL_NAME (Type: $INFERENCE_MODEL_TYPE)"
-echo "Output Dir: $SAVE_PATH"
-echo "Eval Steps Fraction: $EVAL_STEPS_FRACTION"
-
-# Construct args for HfArgumentParser
-# Note: Boolean flags are passed without values if true, omitted if false
 QUANTIZE_ARGS=""
 if [ "$LOAD_IN_4BIT" = "true" ]; then
   QUANTIZE_ARGS="--quantize --quantization_4bit"
 fi
 
-python $PYTHON_SCRIPT \
+# Ensure the save directory exists
+mkdir -p "$SAVE_PATH"
+
+PYTHON_SCRIPT="/workspace/main/train_replug.py"
+
+python3 $PYTHON_SCRIPT \
     --retr_model_name_or_path "$RETRIEVAL_MODEL_NAME" \
     --infer_model_name_or_path "$INFERENCE_MODEL_NAME" \
     --infer_model_type "$INFERENCE_MODEL_TYPE" \
@@ -109,12 +79,12 @@ python $PYTHON_SCRIPT \
     --seed $SEED \
     --log_to_wandb \
     --wandb_proj_name "$WANDB_RUN_NAME" \
-    --trained_model_save_path "$SAVE_PATH" \
+    --trained_model_save_path "$SAVE_PATH" \ # Ensure SAVE_PATH is passed correctly
     --retr_max_seq_length $RETRIEVAL_MAX_SEQ_LEN \
     --eval_steps $EVAL_STEPS_FRACTION \
+    --warmup_ratio $WARMUP_RATIO \ # Added warmup_ratio arg
+    --k_eval_values_accuracy $K_EVAL_VALUES_ACCURACY \
+    --k_eval_values_ndcg $K_EVAL_VALUES_NDCG \
     $QUANTIZE_ARGS \
-    # --verbose # Uncomment for more detailed logging
-
-echo "Training finished."
-echo "Model saved in: $SAVE_PATH"
+    --max_train_samples $MAX_TRAIN_SAMPLES
 

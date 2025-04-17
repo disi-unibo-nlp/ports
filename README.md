@@ -4,6 +4,14 @@
 
 This repository contains the code and datasets for reproducing the experiments described in the paper titled "**PORTS: Preference-Optimized Retrievers for Tool Selection with Large Language Models.**" The paper introduces **PORTS**, a novel method to fine-tune retrievers that align with the preferences of a frozen Large Language Model for tool selection tasks. By optimizing the correlation between retrieval probabilities and downstream performance, **PORTS** enhances the accuracy of tool selection while maintaining low computational demands. The approach is validated through extensive experiments on six diverse datasets, demonstrating significant improvements in tool selection accuracy compared to existing methods.
 
+
+## TODO
+
+- [x] Merge modalities into unified src interface
+- [ ] Remove `src_{port,replug,mnlr}`
+
+
+
 <br/>
 <p align="center">
 <img src="assets/ports_overview.png" width="80%" height="auto" alt="PORTS Training Overview" class="center">
@@ -17,6 +25,7 @@ This repository contains the code and datasets for reproducing the experiments d
 - [Project Structure](#project-structure)
 - [Quickstart](#quickstart)
 - [Using the Markdown File](#using-the-markdown-file)
+- [Script-based Training](#script-based-training)
 - [Main Accuracy Results](#main-accuracy-results)
 
 ## Model
@@ -69,104 +78,112 @@ The repository is organized with the following structure:
 
 ### Using the Makefile
 
-We provide a Makefile that offers a clean interface for running all training operations:
+We provide a Makefile that offers a clean interface for running all training operations. This is the recommended way to launch training and evaluation jobs, as it ensures consistent defaults and easy overrides.
+
+### Running Training via Makefile
+
+#### 1. PORTS Training
 
 ```bash
-# View available commands and options
-make help
+make ports
+```
 
-# Train PORTS model
-make ports DATASET=toolbench INFERENCE_MODEL=llama3-8B
+#### 2. RePlug Training
 
-# Train RePlug model
-make replug DATASET=bfcl EPOCHS=10 BATCH_SIZE=4
+```bash
+make replug
+```
 
-# Train MNRL model
-make mnrl RETRIEVAL_MODEL=FacebookAI/roberta-base
+#### 3. MNRL Training
 
-# Start an interactive Docker container
+```bash
+make mnrl
+```
+
+#### 4. Docker (interactive)
+
+```bash
 make docker
+```
 
-# Run a specific command in Docker
-make docker-cmd CMD="python main/train_mnrl.py --help"
+#### 5. Clean Output Directories
 
-# Clean up output directories
+```bash
 make clean
 ```
 
-### Training Options
+### Overriding Defaults
 
-All training commands accept the following options:
+You can override any default parameter by specifying it on the command line. For example:
 
-- `DATASET`: Dataset name (default: toolbench)
-- `RETRIEVAL_MODEL`: Retrieval model name (default: BAAI/bge-base-en-v1.5)
-- `INFERENCE_MODEL`: Inference model name (default: llama3-8B)
-- `EPOCHS`: Number of training epochs (default: 5)
-- `BATCH_SIZE`: Batch size (default: 2)
-- `LR`: Learning rate (default: 1e-5)
-- `SEED`: Random seed (default: 42)
-- `EVAL_STEPS`: Evaluation steps fraction (default: 0.2)
-- `USE_4BIT`: Use 4-bit quantization (default: true)
-
-### Direct Script Usage
-
-Alternatively, you can run the training script directly:
-
-```
-usage: main_train_port.py [-h]
-                       [--dataset {bfcl,apibank,apibench,octopus,octopus-overlap,toole,toole-overlap,toolbench}]
-                       [--inference_model_name {llama3-8B,codestral-22B,gemma2-2B,groqLlama3Tool-8B}]
-                       [--retrieval_model_name RETRIEVAL_MODEL_NAME]
-                       [--retriever_max_seq_length RETRIEVER_MAX_SEQ_LENGTH]
-                       [--inference_max_seq_length INFERENCE_MAX_SEQ_LENGTH]
-                       [--do_train] [--do_eval] [--load_in_4bit]
-                       [--eval_strategy {epoch,steps}]
-                       [--eval_steps EVAL_STEPS]
-                       [--max_train_samples MAX_TRAIN_SAMPLES]
-                       [--max_eval_samples MAX_EVAL_SAMPLES]
-                       [--n_reembedding_steps N_REEMBEDDING_STEPS]
-                       [--n_epochs N_EPOCHS] [--lr LR] [--lr_type LR_TYPE]
-                       [--train_batch_size TRAIN_BATCH_SIZE]
-                       [--eval_batch_size EVAL_BATCH_SIZE]
-                       [--preprocessing_batch_size PREPROCESSING_BATCH_SIZE]
-                       [--padding_side PADDING_SIDE]
-                       [--lambda_loss LAMBDA_LOSS]
-                       [--n_neg_examples N_NEG_EXAMPLES] [--k_eval K_EVAL]
-                       [--gamma GAMMA] [--beta BETA]
-                       [--preference_weight PREFERENCE_WEIGHT]
-                       [--seed SEED]
-                       [--wandb_project_name WANDB_PROJECT_NAME]
-                       [--wandb_run_name WANDB_RUN_NAME]
-                       [--log_freq LOG_FREQ]
-```
-
-For example, to train `RoBERTa-base` on the `ToolE` dataset using **PORTS**:
 ```bash
-python3 main/main_train_port.py --dataset toole \
-                          --inference_model_name llama3-8B \
-                          --retrieval_model_name FacebookAI/roberta-base \
-                          --retriever_max_seq_length 512 \
-                          --inference_max_seq_length 1024 \
-                          --n_epochs 3 \
-                          --lr 1e-5 \
-                          --lr_type cosine \
-                          --train_batch_size 2 \
-                          --eval_batch_size 2 \
-                          --preprocessing_batch_size 8 \
-                          --n_reembedding_steps 500 \
-                          --padding_side left \
-                          --lambda_loss 0.3 \
-                          --n_neg_examples 3 \
-                          --k_eval 3 \
-                          --gamma 0.5 \
-                          --beta 0.5 \
-                          --seed 42 \
-                          --do_train \
-                          --do_eval \
-                          --eval_strategy steps \
-                          --eval_steps 500 \
-                          --load_in_4bit
+make ports DATASET=bfcl INFERENCE_MODEL=gemma2-2B
+make replug EPOCHS=10 BATCH_SIZE=4
+make mnrl RETRIEVAL_MODEL=FacebookAI/roberta-base
 ```
+
+### Available Parameters
+
+#### Common Parameters (all training methods)
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `DATASET` | Dataset name | toolbench |
+| `RETRIEVAL_MODEL` | Retrieval model name | BAAI/bge-base-en-v1.5 |
+| `INFERENCE_MODEL` | Inference model name | llama3-8B |
+| `EPOCHS` | Number of training epochs | 5 |
+| `BATCH_SIZE` | Training batch size | 2 |
+| `LR` | Learning rate | 1e-5 |
+| `SEED` | Random seed | 42 |
+| `EVAL_STEPS` | Evaluation steps fraction | 0.2 |
+| `USE_4BIT` | Use 4-bit quantization | true |
+| `MAX_TRAIN_SAMPLES` | Maximum training samples | 1000 |
+| `GAMMA` | Gamma temperature | 0.5 |
+| `BETA` | Beta temperature | 0.5 |
+| `WARMUP_RATIO` | Fraction of training steps for warmup | 0.1 |
+| `K_EVAL_VALUES_ACCURACY` | Values of k for accuracy@k evaluation | 1 3 5 |
+| `K_EVAL_VALUES_NDCG` | Values of k for ndcg@k evaluation | 1 3 5 |
+
+#### MNRL-Specific Parameters
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `SCHEDULER` | Learning rate scheduler | warmupcosine |
+| `POOLING` | Embedding pooling strategy | mean |
+| `NEGATIVES_PER_SAMPLE` | Number of negative samples | 1 |
+| `MODEL_NAME` | Retrieval model name | BAAI/bge-base-en-v1.5 |
+| `PREPROCESSING_BATCH_SIZE` | Batch size for preprocessing | 16 |
+| `EVAL_STEPS_FRACTION` | Fraction of steps for evaluation | 0.2 |
+| `WANDB_PROJECT_NAME` | Weights & Biases project name | MNRL_Training |
+| `WANDB_RUN_NAME` | Weights & Biases run name | auto-generated |
+| `OUTPUT_DIR` | Directory to save model, logs, and results | auto-generated |
+| `RANDOM_NEGATIVES` | Whether to use random negatives | true |
+| `EVALUATE_ON_TEST` | Whether to evaluate on test set | true |
+| `USE_PRE_TRAINED_MODEL` | Whether to use pre-trained model | true |
+| `PUSH_TO_HUB` | Whether to push model to HF Hub | true |
+| `PUBLIC_MODEL` | Whether to make model public | true |
+| `HUB_REPO_NAME` | HuggingFace Hub repo name | auto-generated |
+| `LOG_FILE` | Path to log file | auto-generated |
+| `WARMUP_RATIO` | Fraction of training steps for warmup | 0.1 |
+
+### Example Usage
+
+```bash
+# Train PORTS with non-default parameters
+make ports DATASET=apibench INFERENCE_MODEL=llama3-8B EPOCHS=3 LAMBDA_WEIGHT=0.5 PREF_BETA=0.8
+
+# Train RePlug with customized retrieval settings
+make replug DATASET=bfcl RETRIEVAL_MODEL=FacebookAI/roberta-base NUM_RETRIEVED_DOCS=8 GAMMA=0.3
+
+# Train MNRL with specific pooling strategy and batch size
+make mnrl DATASET=octopus RETRIEVAL_MODEL=BAAI/bge-base-en-v1.5 POOLING=cls BATCH_SIZE=64
+```
+
+### Notes
+
+- The Makefile will call the appropriate script in `main/scripts/` with all parameters set.
+- Output directories are automatically created.
+- For advanced usage or script-specific parameters, see the script-based training section below.
 
 ## Using the Markdown File
 
@@ -225,6 +242,123 @@ When adding new features or models to the project, be sure to update:
 4. Training and evaluation result tables
 
 Remember to maintain consistent formatting and style to ensure readability.
+
+## Script-based Training
+
+You can also run training using the provided shell scripts, which are aligned with the Makefile and support environment variable overrides for all key parameters.
+
+### 1. PORTS Training
+
+Run the PORTS training script:
+
+```bash
+bash main/scripts/train_ports.sh
+```
+
+#### Overriding Defaults
+
+You can override any default by setting the corresponding environment variable before the script call:
+
+```bash
+DATASET_NAME=bfcl INFERENCE_MODEL_PSEUDONAME=gemma2-2B RETRIEVAL_MODEL_NAME=FacebookAI/roberta-base bash main/scripts/train_ports.sh
+```
+
+#### All Environment Variables (PORTS)
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DATASET_NAME` | Dataset name | toolbench |
+| `RETRIEVAL_MODEL_NAME` | Retrieval model name | BAAI/bge-base-en-v1.5 |
+| `INFERENCE_MODEL_PSEUDONAME` | Inference model pseudo-name | llama3-8B |
+| `RETRIEVAL_MAX_SEQ_LEN` | Max seq length for retriever | 512 |
+| `INFERENCE_MAX_SEQ_LEN` | Max seq length for inference | 1024 |
+| `N_EPOCHS` | Number of epochs | 5 |
+| `LR` | Learning rate | 1e-5 |
+| `LR_SCHEDULER` | Learning rate scheduler | cosine |
+| `TRAIN_BATCH_SIZE` | Training batch size | 2 |
+| `EVAL_BATCH_SIZE` | Evaluation batch size | 4 |
+| `PREPROCESS_BATCH_SIZE` | Preprocessing batch size | 16 |
+| `PADDING_SIDE` | Tokenizer padding side | left |
+| `LAMBDA_WEIGHT` | Lambda loss weight | 0.3 |
+| `N_NEGS` | Number of negative examples | 3 |
+| `GAMMA` | Gamma temperature | 0.5 |
+| `BETA` | Beta temperature | 0.5 |
+| `PREF_BETA` | Preference weight (ORPO beta) | 1 |
+| `CORPUS_UPDATES` | Steps between corpus re-embedding | 100 |
+| `SAVE_STRATEGY` | Model saving strategy | epoch |
+| `SAVE_STEPS` | Steps between model saves | None |
+| `SAVE_DIR` | Directory to save checkpoints | ./checkpoints |
+| `MAX_CHECKPOINTS` | Maximum number of checkpoints | None |
+| `SEED` | Random seed | 42 |
+| `EVAL_STEPS` | Evaluation steps fraction | 0.2 |
+| `LOAD_IN_4BIT` | Use 4-bit quantization | true |
+| `MAX_TRAIN_SAMPLES` | Maximum training samples | 1000 |
+| `WARMUP_RATIO` | Fraction of training steps for warmup | 0.1 |
+| `WANDB_RUN_NAME` | Weights & Biases run name | auto-generated |
+| `K_EVAL_VALUES_ACCURACY` | Values for accuracy@k | 1 3 5 |
+| `K_EVAL_VALUES_NDCG` | Values for ndcg@k | 1 3 5 |
+
+### 2. RePlug Training
+
+Run the RePlug training script:
+
+```bash
+bash main/scripts/train_replug.sh
+```
+
+#### Overriding Defaults
+
+```bash
+DATASET_NAME=bfcl INFERENCE_MODEL_PSEUDONAME=gemma2-2B RETRIEVAL_MODEL_NAME=FacebookAI/roberta-base bash main/scripts/train_replug.sh
+```
+
+#### All Environment Variables (RePlug)
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DATASET_NAME` | Dataset name | toolbench |
+| `WANDB_RUN_NAME` | Weights & Biases run name | auto-generated |
+| `SAVE_PATH` | Path to save trained model and outputs | auto-generated |
+| `INFERENCE_MODEL_NAME` | Actual model path (auto-mapped) | varies by pseudo-name |
+| `SEED` | Random seed | 42 |
+| `LOAD_IN_4BIT` | Use 4-bit quantization | true |
+| `MAX_TRAIN_SAMPLES` | Maximum training samples | 1000 |
+| `WARMUP_RATIO` | Fraction of training steps for warmup | 0.1 |
+| `QUERY_COLUMN` | Name of query column in dataset | query_for_retrieval |
+
+### 3. MNRL Training
+
+Run the MNRL training script:
+
+```bash
+bash main/scripts/train_mnrl.sh
+```
+
+#### Overriding Defaults
+
+```bash
+DATASET_NAME=bfcl MODEL_NAME=FacebookAI/roberta-base bash main/scripts/train_mnrl.sh
+```
+
+#### All Environment Variables (MNRL)
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DATASET_NAME` | Dataset name | toolbench |
+| `WANDB_PROJECT_NAME` | Weights & Biases project name | MNRL_Training |
+| `WANDB_RUN_NAME` | Weights & Biases run name | auto-generated |
+| `OUTPUT_DIR` | Directory to save model, logs, and results | auto-generated |
+| `MAX_SEQ_LENGTH` | Maximum sequence length | 512 |
+| `EVAL_STEPS_FRACTION` | Fraction of steps for evaluation | 0.2 |
+| `WARMUP_RATIO` | Fraction of training steps for warmup | 0.1 |
+| `SCHEDULER` | Learning rate scheduler | warmupcosine |
+| `RANDOM_NEGATIVES` | Whether to use random negatives | true |
+
+### Notes
+
+- All scripts can be called directly or via the Makefile (see above).
+- To change any parameter, set the corresponding environment variable before the script call.
+- Output directories are automatically created based on the dataset, model, and timestamp.
 
 ## Main Accuracy Results
 
