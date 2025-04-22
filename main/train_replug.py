@@ -220,13 +220,27 @@ def main():
     eval_api_corpus = list(set(dataset[eval_split_name]["api_description"]))
     logger.info(f"Corpus sizes: Train={len(train_api_corpus)}, Eval={len(eval_api_corpus)}")
 
-    def tokenize_function(samples):
-        return retr_tokenizer(samples["query"], padding=True, truncation=True, return_tensors='pt')
+    # Update tokenize function to match main_train_port.py style
+    def tokenize_function(examples):
+        # Process queries in batch mode
+        tokenized = retr_tokenizer(
+            examples["query"],
+            padding="max_length",
+            truncation=True,
+            max_length=args.retr_max_seq_length,
+            return_tensors="pt"
+        )
+        return tokenized
+
+    # Determine number of processes for parallel mapping
+    num_proc = min(os.cpu_count() or 1, 8)  # Limit to 8 processes max
+    logger.info(f"Using {num_proc} processes for dataset mapping")
 
     input_training_dataset = dataset["train"].map(
         tokenize_function,
         batched=True,
         batch_size=args.preprocess_batch_size,
+        num_proc=num_proc,
         remove_columns=dataset["train"].column_names
     )
 
@@ -234,6 +248,7 @@ def main():
         tokenize_function,
         batched=True,
         batch_size=args.preprocess_batch_size,
+        num_proc=num_proc,
         remove_columns=dataset[eval_split_name].column_names
     )
 
@@ -270,8 +285,15 @@ def main():
         tokenizer=infer_tokenizer, 
         mlm=False)
 
-    def inner_tokenize_function(samples):
-        return infer_tokenizer(samples["text"], truncation=True, padding=True, return_tensors="pt")
+    def inner_tokenize_function(examples):
+        # Apply truncation and padding in batch mode
+        return infer_tokenizer(
+            examples["text"], 
+            truncation=True, 
+            padding="max_length", 
+            max_length=args.retr_max_seq_length, 
+            return_tensors="pt"
+        )
     
     def parse_batch(dataset_split, batch, index):
         curr_bs = batch["input_ids"].size(0)
@@ -322,6 +344,7 @@ def main():
             inner_tokenize_function,
             batched=True,
             batch_size=args.preprocess_batch_size,
+            num_proc=num_proc,  # Add parallel processing
             remove_columns=inner_dataset.column_names
         )
         inner_data_loader = DataLoader(
@@ -501,7 +524,7 @@ def main():
                                                retr_tokenizer,
                                                eval_api_corpus,
                                                device="cuda",
-                                               batch_size=args.batch_size,
+                                               batch_size=args.preprocess_batch_size,  # Use preprocessing batch size
                                                max_length=args.retr_max_seq_length)
 
     evaluate_with_retrieval_evaluator(
@@ -567,14 +590,14 @@ def main():
             retr_model_train_instance = SentenceTransformer(modules=[word_embedding_model, pooling_model], device="cuda")
             retr_model_train_instance.train()  # Set to train mode
             
-            # Get document embeddings once per split
+            # Get document embeddings once per split with better batching
             logger.info(f"Embedding corpus for split {split_idx+1}")
             with torch.no_grad():
                 embedded_documents = embed_corpus(retr_model_train_instance,
                                                   retr_tokenizer,
                                                   train_api_corpus,
                                                   device="cuda",
-                                                  batch_size=args.batch_size,
+                                                  batch_size=args.preprocess_batch_size,  # Use preprocessing batch size
                                                   max_length=args.retr_max_seq_length)
             
             # Ensure embedded_documents is on CUDA
@@ -696,7 +719,7 @@ def main():
                                                            retr_tokenizer,
                                                            eval_api_corpus,
                                                            device="cuda",
-                                                           batch_size=args.batch_size,
+                                                           batch_size=args.preprocess_batch_size,  # Use preprocessing batch size
                                                            max_length=args.retr_max_seq_length)
 
                 evaluate_with_retrieval_evaluator(
