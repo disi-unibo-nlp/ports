@@ -18,12 +18,15 @@ EVAL_STEPS_FRACTION="${EVAL_STEPS_FRACTION:-0.2}"
 SEED="${SEED:-42}"
 LOAD_IN_4BIT="${LOAD_IN_4BIT:-true}"
 MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-1000}"
-WARMUP_RATIO="${WARMUP_RATIO:-0.1}" # Added WARMUP_RATIO
+WARMUP_RATIO="${WARMUP_RATIO:-0.1}"
 WANDB_PROJECT_NAME="${WANDB_PROJECT_NAME:-REPLUG_Training}"
 WANDB_RUN_NAME="${WANDB_RUN_NAME:-REPLUG-${DATASET_NAME}-R_$(basename ${RETRIEVAL_MODEL_NAME})-I_${INFERENCE_MODEL_PSEUDONAME}-LR${LR}}"
-SAVE_PATH="${SAVE_PATH:-/home/molfetta/ports/main/output/replug/replug_retriever_${DATASET_NAME}_$(basename ${RETRIEVAL_MODEL_NAME})_$(date +%Y%m%d_%H%M%S)}" # Default SAVE_PATH if not set
+SAVE_PATH="${SAVE_PATH:-/home/molfetta/ports/main/output/replug/replug_retriever_${DATASET_NAME}_$(basename ${RETRIEVAL_MODEL_NAME})_$(date +%Y%m%d_%H%M%S)}"
 K_EVAL_VALUES_ACCURACY="${K_EVAL_VALUES_ACCURACY:-1 3 5}"
 K_EVAL_VALUES_NDCG="${K_EVAL_VALUES_NDCG:-1 3 5}"
+# Updated parameter for corpus embedding updates
+CORPUS_UPDATES="${CORPUS_UPDATES:-5}"
+PREPROCESS_BATCH_SIZE="${PREPROCESS_BATCH_SIZE:-16}"
 
 # Map pseudo-name to actual model path/ID and type
 case $INFERENCE_MODEL_PSEUDONAME in
@@ -80,6 +83,8 @@ python3 $PYTHON_SCRIPT \
     --warmup_ratio $WARMUP_RATIO \
     --k_eval_values_accuracy $K_EVAL_VALUES_ACCURACY \
     --k_eval_values_ndcg $K_EVAL_VALUES_NDCG \
+    --corpus_updates $CORPUS_UPDATES \
+    --preprocess_batch_size $PREPROCESS_BATCH_SIZE \
     $QUANTIZE_ARGS \
     --max_train_samples $MAX_TRAIN_SAMPLES
 

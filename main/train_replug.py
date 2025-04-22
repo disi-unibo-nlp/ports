@@ -68,6 +68,8 @@ def main():
     parser.add_argument('--warmup_ratio',                type=float, default=0.1, help="fraction of total training steps for warmup")
     parser.add_argument('--save_strategy',               type=str,   default='epoch')
     parser.add_argument('--save_dir',                    type=str,   default='/workspace/output')
+    parser.add_argument('--corpus_updates',              type=int,   default=5, help="Number of corpus embedding updates per epoch")
+    parser.add_argument('--preprocess_batch_size',       type=int,   default=16, help="Batch size for preprocessing operations")
     args = parser.parse_args()
 
     log_wandb = args.log_to_wandb
@@ -145,7 +147,9 @@ def main():
             "learning_rate": args.learning_rate,
             "lr_scheduler": args.lr_scheduler,
             "dataset": args.dataset,
-            "warmup_ratio": args.warmup_ratio
+            "warmup_ratio": args.warmup_ratio,
+            "corpus_updates": args.corpus_updates,
+            "preprocess_batch_size": args.preprocess_batch_size
         }
         if eval_steps_fraction is not None:
             wandb_config["eval_steps_fraction"] = eval_steps_fraction
@@ -222,12 +226,14 @@ def main():
     input_training_dataset = dataset["train"].map(
         tokenize_function,
         batched=True,
+        batch_size=args.preprocess_batch_size,
         remove_columns=dataset["train"].column_names
     )
 
     input_eval_dataset = dataset[eval_split_name].map(
         tokenize_function,
         batched=True,
+        batch_size=args.preprocess_batch_size,
         remove_columns=dataset[eval_split_name].column_names
     )
 
@@ -272,22 +278,30 @@ def main():
         batch_data = dataset_split[index*batch_size:(index*batch_size)+curr_bs]
         return curr_bs, batch_data
 
-    def get_top_k_docs_per_query(embedded_documents, batch_data, k, current_retr_model):
-        device = embedded_documents.device
-        embedded_queries = current_retr_model.encode(batch_data["query"], 
-                                                     convert_to_tensor=True, 
-                                                     show_progress_bar=False)
-        
-        # Ensure both tensors are on the same device
-        embedded_queries = embedded_queries.to(device)
-        
-        embedded_documents_exp = embedded_documents.unsqueeze(0)
-        embedded_queries_exp = embedded_queries.unsqueeze(1)
-        cos_sim = F.cosine_similarity(embedded_documents_exp, embedded_queries_exp, dim=-1)
-        top_k_docs = torch.topk(cos_sim, k, dim=-1)
-        return top_k_docs.indices, top_k_docs.values, cos_sim
+    def compute_Pr(similarities, gamma):
+        # Ensure tensor requires gradients
+        if not similarities.requires_grad:
+            similarities = similarities.detach().requires_grad_(True)
+        return F.softmax(similarities / gamma, dim=1)
 
-    compute_Pr = lambda similarities, gamma: F.softmax(similarities / gamma, dim=1)
+    def compute_Q(perplexities, beta):
+        perplexities = torch.stack(perplexities).T
+        # Ensure tensor requires gradients
+        if not perplexities.requires_grad:
+            perplexities = perplexities.detach().requires_grad_(True)
+        Q = F.softmax(perplexities / beta, dim=1)
+        return Q
+
+    def compute_loss(Q, Pr, kl_div):
+        # Make sure both tensors require gradients
+        if not Q.requires_grad:
+            Q = Q.detach().requires_grad_(True)
+        if not Pr.requires_grad:
+            Pr = Pr.detach().requires_grad_(True)
+        Q_log = torch.log(Q)
+        divergence = kl_div(Q_log, Pr).sum(-1)
+        loss = divergence.mean()
+        return loss
 
     def get_prompts(prompt_template, documents, batch_data, documents_per_query):
         prompts = [
@@ -307,6 +321,7 @@ def main():
         inner_dataset = inner_dataset.map(
             inner_tokenize_function,
             batched=True,
+            batch_size=args.preprocess_batch_size,
             remove_columns=inner_dataset.column_names
         )
         inner_data_loader = DataLoader(
@@ -326,17 +341,6 @@ def main():
         if verbose:
             logger.info(f"LOSS PER SAMPLE: {-loss_per_sample}")
         return loss_per_sample
-
-    def compute_Q(perplexities, beta):
-        perplexities = torch.stack(perplexities).T
-        Q = F.softmax(perplexities / beta, dim=1)
-        return Q
-
-    def compute_loss(Q, Pr, kl_div):
-        Q_log = torch.log(Q)
-        divergence = kl_div(Q_log, Pr).sum(-1)
-        loss = divergence.mean()
-        return loss
 
     def evaluate_with_retrieval_evaluator(retr_model_eval: SentenceTransformer,
                                           eval_dataset_split: Dataset,
@@ -465,29 +469,15 @@ def main():
 
         return scores
 
-    # def get_sentence_transformer(base_model, device="cuda"):
-    #     # Create a temporary directory and save both model and tokenizer
-    #     tmp_model_path = os.path.join("tmp_retr_model_eval")
-    #     # Save the model and tokenizer to the temporary path
-    #     base_model.save_pretrained(tmp_model_path)
-    #     retr_tokenizer.save_pretrained(tmp_model_path)
-        
-    #     # Create the transformer model using the saved path (which includes tokenizer)
-    #     transformer = models.Transformer(tmp_model_path)
-    #     pooling = models.Pooling(
-    #         transformer.get_word_embedding_dimension(),
-    #         pooling_mode_cls_token=True,
-    #         pooling_mode_mean_tokens=False,
-    #         pooling_mode_max_tokens=False,
-    #         pooling_mode_mean_sqrt_len_tokens=False
-    #     )
-    #     normalize = models.Normalize()
-    #     return SentenceTransformer(modules=[transformer, pooling, normalize], device=device)
-
     def get_sentence_transformer(base_model, device="cuda"):
-        pooling_model = models.Pooling(base_model.config.hidden_size, pooling_mode_cls_token=True)
-        return SentenceTransformer(modules=[base_model, pooling_model], device=device)
-
+        word_embedding_model = models.Transformer(args.retr_model_name_or_path)
+        pooling_model = models.Pooling(
+            word_embedding_model.get_word_embedding_dimension(),
+            pooling_mode_cls_token=True,
+            pooling_mode_mean_tokens=False,
+            pooling_mode_max_tokens=False
+        )
+        return SentenceTransformer(modules=[word_embedding_model, pooling_model], device=device)
 
     steps_per_epoch = len(train_data_loader)
     evaluation_step_interval = None
@@ -536,16 +526,49 @@ def main():
         epoch_loss = 0
         batch_count = 0
 
-        for index, batch in enumerate(tqdm(train_data_loader, 
-                                           desc=f"Epoch {epoch+1}/{num_epochs}", 
-                                           miniters=max(1, len(train_data_loader)//20))):
-            current_step_in_epoch = index + 1
-            global_step += 1
-            curr_bs, batch_data = parse_batch(dataset["train"], batch, index)
-
-            retr_model_train_instance = get_sentence_transformer(retr_model_base, device="cuda")
-            retr_model_train_instance.eval()
+        # Create data subsplits based on corpus_updates
+        data_splits = []
+        steps_per_epoch = len(train_data_loader)
+        
+        if not args.corpus_updates or args.corpus_updates <= 0:
+            # Use a single split if corpus_updates is not set
+            data_splits = [range(len(train_data_loader))]
+        else:
+            # Create subsplits for corpus embedding updates
+            subsplit_len = steps_per_epoch // args.corpus_updates
+            data_subsplits_lens = [subsplit_len for _ in range(args.corpus_updates)]
+            # Handle remainder
+            if (rest := steps_per_epoch % args.corpus_updates) != 0:
+                data_subsplits_lens.append(rest)
             
+            start_idx = 0
+            for subsplit_len in data_subsplits_lens:
+                end_idx = start_idx + subsplit_len
+                data_splits.append(range(start_idx, end_idx))
+                start_idx = end_idx
+
+        logger.info(f"Created {len(data_splits)} data splits for embedding corpus updates")
+
+        for split_idx, batch_indices in enumerate(data_splits):
+            logger.info(f"Processing split {split_idx+1}/{len(data_splits)} with {len(batch_indices)} batches")
+            
+            # Create sentence transformer with gradients enabled for the encoder
+            word_embedding_model = models.Transformer(args.retr_model_name_or_path)
+            # Ensure model parameters require gradients
+            for param in word_embedding_model.parameters():
+                param.requires_grad = True
+                
+            pooling_model = models.Pooling(
+                word_embedding_model.get_word_embedding_dimension(),
+                pooling_mode_cls_token=True,
+                pooling_mode_mean_tokens=False,
+                pooling_mode_max_tokens=False
+            )
+            retr_model_train_instance = SentenceTransformer(modules=[word_embedding_model, pooling_model], device="cuda")
+            retr_model_train_instance.train()  # Set to train mode
+            
+            # Get document embeddings once per split
+            logger.info(f"Embedding corpus for split {split_idx+1}")
             with torch.no_grad():
                 embedded_documents = embed_corpus(retr_model_train_instance,
                                                   retr_tokenizer,
@@ -553,84 +576,111 @@ def main():
                                                   device="cuda",
                                                   batch_size=args.batch_size,
                                                   max_length=args.retr_max_seq_length)
-
+            
             # Ensure embedded_documents is on CUDA
             if embedded_documents.device.type != "cuda":
                 embedded_documents = embedded_documents.to("cuda")
-                
-            documents_per_query, similarities_per_query, _ = get_top_k_docs_per_query(
-                embedded_documents, batch_data, k, retr_model_train_instance
-            )
 
-            retr_model_base.train()
-            
-            Pr = compute_Pr(similarities_per_query, gamma)
-            del similarities_per_query, _, embedded_documents, retr_model_train_instance
-            torch.cuda.empty_cache()
-            
-            prompts = get_prompts(prompt_template, train_api_corpus, batch_data, documents_per_query)
-            inner_data_loader = prepare_inner_data_loader(prompts, curr_bs, inner_tokenize_function, inner_data_collator)
-            perplexities = []
-            for inner_batch in inner_data_loader:
-                inner_batch = {k: v.to("cuda") for k, v in inner_batch.items()}
-                labels = inner_batch.pop("labels")
-                with torch.no_grad():
-                    outputs = infer_model(**inner_batch)
-                perplexity = get_perplexity_per_sample(outputs, labels, cross_entropy)
-                perplexities.append(perplexity)
-                del outputs, perplexity
-                torch.cuda.empty_cache()
-            Q = compute_Q(perplexities, beta)
+            # Process each batch in the current split
+            for relative_idx, batch_idx in enumerate(batch_indices):
+                batch = train_data_loader.__iter__().__next__() if relative_idx == 0 else next(train_data_loader.__iter__())
+                current_step_in_epoch = batch_idx + 1
+                global_step += 1
+                curr_bs, batch_data = parse_batch(dataset["train"], batch, batch_idx)
 
-            loss = compute_loss(Q, Pr, kl_div)
-            loss.backward()
-            optimizer.step()
-            lr_scheduler.step()
-            optimizer.zero_grad()
-
-            assert not torch.isnan(loss), "Loss is NaN"
-            assert loss < 1e6, f"Loss is too large: {loss}"
-            del perplexities, Q, Pr, inner_data_loader, inner_batch, documents_per_query
-            torch.cuda.empty_cache()
-
-            epoch_loss += loss.item()
-            batch_count += 1
-
-            if log_wandb and global_step % min(20, max(1, len(train_data_loader)//5)) == 0:
-                wandb.log({
-                    "train/replug_loss": loss.item(),
-                    "train/learning_rate": optimizer.param_groups[0]['lr'],
-                    "progress/epoch": epoch + 1,
-                }, step=global_step)
-
-            if evaluation_step_interval is not None and global_step % evaluation_step_interval == 0:
-                logger.info(f"--- Evaluating at Epoch {epoch+1}, Step {current_step_in_epoch}/{steps_per_epoch} (Global Step {global_step}) ---")
-                retr_model_base.eval()
-                retr_model_eval_instance = get_sentence_transformer(retr_model_base, device="cuda")
-                with torch.no_grad():
-                    embedded_eval_documents = embed_corpus(retr_model_eval_instance,
-                                                           retr_tokenizer,
-                                                           eval_api_corpus,
-                                                           device="cuda",
-                                                           batch_size=args.batch_size,
-                                                           max_length=args.retr_max_seq_length)
-
-                evaluate_with_retrieval_evaluator(
-                    retr_model_eval=retr_model_eval_instance,
-                    eval_dataset_split=dataset[eval_split_name],
-                    eval_api_corpus=eval_api_corpus,
-                    corpus_embeddings=embedded_eval_documents,
-                    device="cuda",
-                    k_values_accuracy=k_values_accuracy,
-                    k_values_ndcg=k_values_ndcg,
-                    eval_batch_size=args.batch_size,
-                    prefix="eval",
-                    epoch=epoch + 1,
-                    steps=global_step
+                # Re-encode queries with gradients enabled
+                embedded_queries = retr_model_train_instance.encode(
+                    batch_data["query"],
+                    convert_to_tensor=True,
+                    show_progress_bar=False
                 )
-                retr_model_base.train()
-                del embedded_eval_documents, retr_model_eval_instance
+                
+                # Manual similarity calculation with gradients
+                embedded_documents_exp = embedded_documents.unsqueeze(0)
+                embedded_queries_exp = embedded_queries.unsqueeze(1)
+                cos_sim = F.cosine_similarity(embedded_documents_exp, embedded_queries_exp, dim=-1)
+                
+                # Get top k documents
+                top_k_docs = torch.topk(cos_sim, k, dim=-1)
+                documents_per_query = top_k_docs.indices
+                similarities_per_query = top_k_docs.values
+                
+                # Compute Pr with gradients
+                Pr = compute_Pr(similarities_per_query, gamma)
+                
+                del embedded_queries
                 torch.cuda.empty_cache()
+                
+                # Reset the model to training mode
+                retr_model_base.train()
+
+                prompts = get_prompts(prompt_template, train_api_corpus, batch_data, documents_per_query)
+                inner_data_loader = prepare_inner_data_loader(prompts, curr_bs, inner_tokenize_function, inner_data_collator)
+                perplexities = []
+                for inner_batch in inner_data_loader:
+                    inner_batch = {k: v.to("cuda") for k, v in inner_batch.items()}
+                    labels = inner_batch.pop("labels")
+                    with torch.no_grad():
+                        outputs = infer_model(**inner_batch)
+                    perplexity = get_perplexity_per_sample(outputs, labels, cross_entropy)
+                    perplexities.append(perplexity)
+                    del outputs, perplexity
+                    torch.cuda.empty_cache()
+                Q = compute_Q(perplexities, beta)
+
+                loss = compute_loss(Q, Pr, kl_div)
+                loss.backward()
+                optimizer.step()
+                lr_scheduler.step()
+                optimizer.zero_grad()
+
+                assert not torch.isnan(loss), "Loss is NaN"
+                assert loss < 1e6, f"Loss is too large: {loss}"
+                del perplexities, Q, Pr, inner_data_loader, inner_batch, documents_per_query
+                torch.cuda.empty_cache()
+
+                epoch_loss += loss.item()
+                batch_count += 1
+
+                if log_wandb and global_step % min(20, max(1, len(train_data_loader)//5)) == 0:
+                    wandb.log({
+                        "train/replug_loss": loss.item(),
+                        "train/learning_rate": optimizer.param_groups[0]['lr'],
+                        "progress/epoch": epoch + 1,
+                    }, step=global_step)
+
+                if evaluation_step_interval is not None and global_step % evaluation_step_interval == 0:
+                    logger.info(f"--- Evaluating at Epoch {epoch+1}, Step {current_step_in_epoch}/{steps_per_epoch} (Global Step {global_step}) ---")
+                    retr_model_base.eval()
+                    retr_model_eval_instance = get_sentence_transformer(retr_model_base, device="cuda")
+                    with torch.no_grad():
+                        embedded_eval_documents = embed_corpus(retr_model_eval_instance,
+                                                               retr_tokenizer,
+                                                               eval_api_corpus,
+                                                               device="cuda",
+                                                               batch_size=args.batch_size,
+                                                               max_length=args.retr_max_seq_length)
+
+                    evaluate_with_retrieval_evaluator(
+                        retr_model_eval=retr_model_eval_instance,
+                        eval_dataset_split=dataset[eval_split_name],
+                        eval_api_corpus=eval_api_corpus,
+                        corpus_embeddings=embedded_eval_documents,
+                        device="cuda",
+                        k_values_accuracy=k_values_accuracy,
+                        k_values_ndcg=k_values_ndcg,
+                        eval_batch_size=args.batch_size,
+                        prefix="eval",
+                        epoch=epoch + 1,
+                        steps=global_step
+                    )
+                    retr_model_base.train()
+                    del embedded_eval_documents, retr_model_eval_instance
+                    torch.cuda.empty_cache()
+
+            # Clean up at the end of each split
+            del embedded_documents, retr_model_train_instance
+            torch.cuda.empty_cache()
 
         if batch_count > 0:
             avg_epoch_loss = epoch_loss / batch_count

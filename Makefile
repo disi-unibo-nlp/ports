@@ -46,6 +46,8 @@ QUERY_COLUMN ?= query_for_retrieval
 RESPONSE_COLUMN ?= answer
 NUM_RETRIEVED_DOCS ?= 5
 REPLUG_SAVE_PATH ?= $(OUTPUT_DIR)/replug/replug_retriever_$(DATASET)_$(shell basename $(RETRIEVAL_MODEL))_$(shell date +%Y%m%d_%H%M%S)
+CORPUS_UPDATES ?= 5
+PREPROCESS_BATCH_SIZE ?= 16
 
 # MNRL specific parameters
 SCHEDULER ?= warmupcosine
@@ -180,6 +182,8 @@ replug:
 	SAVE_PATH=$(REPLUG_SAVE_PATH) \
 	K_EVAL_VALUES_ACCURACY="$(K_EVAL_VALUES_ACCURACY)" \
 	K_EVAL_VALUES_NDCG="$(K_EVAL_VALUES_NDCG)" \
+	CORPUS_UPDATES=$(CORPUS_UPDATES) \
+	PREPROCESS_BATCH_SIZE=$(PREPROCESS_BATCH_SIZE) \
 	$(SCRIPTS_DIR)/train_replug.sh
 
 # MNRL training
