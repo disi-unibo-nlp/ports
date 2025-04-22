@@ -18,12 +18,12 @@ docker run \
     RETRIEVAL_MODEL=BAAI/bge-base-en-v1.5 \
     BATCH_SIZE=2 \
     EVAL_BATCH_SIZE=2 \
-    PREPROCESS_BATCH_SIZE=16 \
+    PREPROCESS_BATCH_SIZE=8 \
     LR=2e-5 \
     RETRIEVAL_MAX_SEQ_LEN=512 \
     EVAL_STEPS=0.2 \
     WARMUP_RATIO=0.1 \
-    SCHEDULER=cosine \
+    SCHEDULER=warmupcosine \
     POOLING=cls \
     NEGATIVES_PER_SAMPLE=3 \
     SEED=42 \

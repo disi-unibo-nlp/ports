@@ -696,7 +696,7 @@ if __name__ == '__main__':
                         help="Weight decay for AdamW optimizer")
     parser.add_argument("--max_grad_norm", default=1.0, type=float,
                         help="Max gradient norm for gradient clipping")
-    parser.add_argument("--scheduler", default="warmupcosine", type=str, choices=["warmupcosine", "warmuplinear", "constantlr", "cosine"],
+    parser.add_argument("--scheduler", default="warmupcosine", type=str, choices=["warmupcosine", "warmuplinear", "constantlr"],
                         help="Learning rate scheduler")
     parser.add_argument("--checkpoint_save_total_limit", default=2, type=int,
                         help="Maximum number of checkpoints to keep (SBERT saves best based on evaluator)")
