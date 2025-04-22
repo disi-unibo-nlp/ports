@@ -4,6 +4,7 @@ from tqdm import tqdm
 import argparse
 import random
 import json
+import numpy as np
 
 from typing import List
 from transformers.data.data_collator import DataCollatorMixin
@@ -31,8 +32,16 @@ from transformers import (
 from trl import DataCollatorForCompletionOnlyLM
 from datasets import Dataset, load_from_disk
 
+import sys
+import os
+import wandb
 from tqdm import tqdm
+from dotenv import load_dotenv
 
+# Set up environment
+load_dotenv()
+app_path = os.environ.get("APP_PATH", os.path.dirname(__file__))
+sys.path.insert(0, os.path.abspath(app_path))
 
 from datasets.utils.logging import disable_progress_bar
 disable_progress_bar()
@@ -113,49 +122,98 @@ query_id_dict = dict()
 apis_multi = set()
 
 
-def evaluate_with_retrieval_evaluator(
-    retr_model,
-    eval_dataloader,
-    eval_triplets,
-    corpus_embeddings,
-    device: str = "cuda",
-    k_values_accuracy: list = [1, 3, 5],
-    k_values_ndcg: list = [1, 3, 5],
-    api_corpus: List[str] = None,
-    retr_tokenizer: AutoTokenizer = None,
-    dataset_name: str = "toole"
-):
-    """
-    Evaluate using DeviceAwareInformationRetrievalEvaluator.
-    This function is now aligned with the modularity and logging of train_mnrl.py.
-    """
-    logger.info("Preparing data for DeviceAwareInformationRetrievalEvaluator")
+def log_to_wandb(score_dict: dict,
+                 epoch: int,
+                 steps: int,
+                 prefix: str = "eval") -> None:
+    """Logs metrics to W&B with structured keys."""
+    if wandb.run is None:
+        logger.warning("wandb.init() has not been called. Skipping wandb.log().")
+        return
 
-    # Build corpus and mapping
-    api_to_doc_id = {api_desc: f"doc_{i}" for i, api_desc in enumerate(api_corpus)}
+    log_prefix = f"{prefix}/" if prefix else ""
+    logger.info(f"Logging {prefix} metrics to W&B at epoch {epoch}, step {steps}")
+
+    flat_scores = {}
+
+    def flatten_dict(d, parent_key='', sep='/'):
+        """Flattens a nested dictionary for W&B logging."""
+        items = []
+        for k, v in d.items():
+            sanitized_k = str(k).replace('@', '_at_')
+            new_key = f"{parent_key}{sep}{sanitized_k}" if parent_key else sanitized_k
+            if isinstance(v, dict):
+                items.extend(flatten_dict(v, new_key, sep=sep).items())
+            elif isinstance(v, (int, float, np.number)):
+                items.append((new_key, float(v)))
+        return dict(items)
+
+    if isinstance(score_dict, dict):
+        flat_scores = flatten_dict(score_dict)
+    elif isinstance(score_dict, (int, float, np.number)):
+        flat_scores = {"score": float(score_dict)}
+    else:
+        logger.warning(f"Unsupported score_dict type for logging: {type(score_dict)}")
+        return
+
+    wandb_log_data = {f"{log_prefix}{k}": v for k, v in flat_scores.items()}
+    wandb_log_data[f"{prefix}/epoch"] = epoch
+    wandb_log_data[f"{prefix}/step"] = steps
+
+    key_metrics = {}
+    for key, value in wandb_log_data.items():
+        if any(important in key for important in ['accuracy_at_1', 'ndcg_at_1', 'loss/total', 'epoch', 'step']):
+            key_metrics[key] = value
+            logger.info(f"  {key}: {value}")
+    
+    if key_metrics and len(key_metrics) < 5:
+        for key, value in wandb_log_data.items():
+            if key not in key_metrics and isinstance(value, (int, float)):
+                if len(key_metrics) < 10:
+                    key_metrics[key] = value
+                    logger.info(f"  {key}: {value}")
+    
+    wandb.log(wandb_log_data, step=steps)
+
+
+def create_api_evaluator(triplets: list,
+                         eval_api_corpus: list,
+                         batch_size: int = 16,
+                         name: str = 'eval',
+                         k_values_accuracy: list = [1, 3, 5, 10],
+                         k_values_ndcg: list = [1, 3, 5, 10]) -> DeviceAwareInformationRetrievalEvaluator:
+    queries = {}
+    corpus = {}
+    relevant_docs = {}
+
+    api_to_doc_id = {api_desc: f"doc_{i}" for i, api_desc in enumerate(eval_api_corpus)}
     corpus = {doc_id: api_desc for api_desc, doc_id in api_to_doc_id.items()}
 
-    queries = {}
-    relevant_docs = {}
-    anchor_to_query_id = {}
     query_count = 0
+    anchor_to_query_id = {}
 
-    for triplet in eval_triplets:
-        query = triplet["query"]
-        positive = triplet["positive"]
-        if query not in anchor_to_query_id:
+    logger.info(f"Creating evaluator '{name}' with {len(triplets)} triplets / {len(corpus)} corpus items.")
+
+    warning_count = 0
+    for anchor, positive, _ in triplets:
+        if anchor not in anchor_to_query_id:
             query_id = f"q_{query_count}"
-            anchor_to_query_id[query] = query_id
-            queries[query_id] = query
+            anchor_to_query_id[anchor] = query_id
+            queries[query_id] = anchor
             relevant_docs[query_id] = set()
             query_count += 1
         else:
-            query_id = anchor_to_query_id[query]
+            query_id = anchor_to_query_id[anchor]
+
         if positive in api_to_doc_id:
             pos_doc_id = api_to_doc_id[positive]
             relevant_docs[query_id].add(pos_doc_id)
         else:
-            logger.warning(f"Positive API description not found in eval corpus map for query '{query[:50]}...': '{positive[:50]}...'")
+            warning_count += 1
+            if warning_count <= 3:
+                logger.warning(f"API not in corpus: '{positive[:30]}...'")
+            elif warning_count == 4:
+                logger.warning(f"Additional missing APIs found. Suppressing further warnings.")
 
     if not queries:
         logger.error("No queries generated for the evaluator. Check input triplets and corpus.")
@@ -167,80 +225,79 @@ def evaluate_with_retrieval_evaluator(
         logger.warning("Relevant docs mapping is empty. Evaluator might not produce meaningful results.")
 
     evaluator = DeviceAwareInformationRetrievalEvaluator(
-        queries=queries,
-        corpus=corpus,
-        relevant_docs=relevant_docs,
-        mrr_at_k=[],
+        queries,
+        corpus,
+        relevant_docs,
+        batch_size=batch_size,
+        name=name,
+        show_progress_bar=(len(queries) > 10),
         ndcg_at_k=k_values_ndcg,
-        accuracy_at_k=k_values_accuracy,
-        device=device,
-        batch_size=eval_dataloader.batch_size,
-        show_progress_bar=True,
-        score_functions={"cosine": torch.nn.functional.cosine_similarity}
+        accuracy_at_k=k_values_accuracy
     )
 
-    logger.info("Running evaluation with DeviceAwareInformationRetrievalEvaluator")
-    scores = evaluator(model=retr_model)
-
-    logger.info(f"Score dictionary structure: {list(scores.keys())}")
-
-    # Extract R@K and NDCG@K for compatibility
-    ranks = []
-    ndcg_scores = []
-    for k in k_values_accuracy:
-        val = None
-        if "cosine_accuracy@%d" % k in scores:
-            val = scores[f"cosine_accuracy@{k}"]
-        elif "accuracy@k" in scores.get("cosine", {}):
-            val = scores["cosine"]["accuracy@k"].get(k, None)
-        if val is not None:
-            ranks.append(val * 100)
-        else:
-            ranks.append(0)
-    for k in k_values_ndcg:
-        val = None
-        if "cosine_ndcg@%d" % k in scores:
-            val = scores[f"cosine_ndcg@{k}"]
-        elif "ndcg@k" in scores.get("cosine", {}):
-            val = scores["cosine"]["ndcg@k"].get(k, None)
-        if val is not None:
-            ndcg_scores.append(val)
-        else:
-            ndcg_scores.append(0)
-
-    for k, v in zip(k_values_accuracy, ranks):
-        logger.info(f"R@{k}: {v}")
-    for k, v in zip(k_values_ndcg, ndcg_scores):
-        logger.info(f"NDCG@{k}: {v}")
-
-    logger.info(f"Parsed evaluation results: R@K: {ranks}, NDCG@K: {ndcg_scores}")
-    return ranks, ndcg_scores, scores
-
+    logger.info(f"Created evaluator '{name}' with {len(queries)} queries, {len(corpus)} corpus docs.")
+    return evaluator
 
 def run_evaluation(
     retr_model: AutoModel,
     retr_tokenizer: AutoTokenizer,
     dataset: Dataset,
-    eval_api_corpus: List[str],
+    eval_api_corpus: list,
     retriever_max_seq_length: int,
     eval_batch_size: int,
     preprocessing_batch_size: int,
     device: str,
     k_eval_values_accuracy: list = [1, 3, 5],
     k_eval_values_ndcg: list = [1, 3, 5],
-    dataset_name: str = "toole"
+    dataset_name: str = "toole",
+    eval_name: str = "eval",
+    epoch: int = 0,
+    steps: int = 0
 ):
-    retr_model.eval()
-    logger.info("Saving retr_model to tmp path")
-    tmp_model_path = os.path.join("tmp_retr_model")
+    logger.info(f"Running evaluation: {eval_name}")
+    eval_split = dataset["train"] if eval_name == "train_eval" else (dataset["test"] if "test" in dataset else dataset["validation"])
+    triplets = []
+    corpus_set = set(eval_api_corpus)
+
+    print(f"Evaluation split size: {len(eval_split)}")
+    print(f"Corpus size: {len(corpus_set)}")
+    
+    # First, build a mapping of queries to their positive API descriptions
+    query_to_positives = {}
+    for row in eval_split:
+        query = row.get("query")
+        positive_api = row.get("api_description")
+        if not query or not positive_api or positive_api not in corpus_set:
+            continue
+        if query not in query_to_positives:
+            query_to_positives[query] = set()
+        query_to_positives[query].add(positive_api)
+    
+    logger.info(f"Found {len(query_to_positives)} unique queries with positive examples")
+
+    for row in eval_split:
+        query = row.get("query")
+        positive_api = row.get("api_description")
+        if not query or not positive_api or positive_api not in corpus_set:
+            continue
+        # Get all positives for this query and exclude them from potential negatives
+        query_positives = query_to_positives.get(query, set())
+        potential_negatives = list(corpus_set - query_positives)
+        if not potential_negatives:
+            continue
+        negative_api = potential_negatives[0]
+        triplets.append((query, positive_api, negative_api))
+
+    if not triplets:
+        logger.warning(f"No triplets available for evaluation ({eval_name})")
+        return [], [], {}
+
+    logger.info(f"Preparing SentenceTransformer wrapper")
+    tmp_model_path = os.path.join("tmp_retr_model_eval")
     retr_model.save_pretrained(tmp_model_path)
     retr_tokenizer.save_pretrained(tmp_model_path)
 
-    logger.info("Loading retr_model from tmp path")
     transformer = models.Transformer(tmp_model_path)
-    embedding_dim = transformer.get_word_embedding_dimension()
-    print(f"RETR_MODEL: {embedding_dim}")
-
     pooling = models.Pooling(
         transformer.get_word_embedding_dimension(),
         pooling_mode_cls_token=True,
@@ -249,100 +306,83 @@ def run_evaluation(
         pooling_mode_mean_sqrt_len_tokens=False
     )
     normalize = models.Normalize()
-    retr_model = SentenceTransformer(modules=[transformer, pooling, normalize], device=device)
+    st_retr_model = SentenceTransformer(modules=[transformer, pooling, normalize], device=device)
 
-    logger.info("Get Eval DataLoader")
-    eval_data_config = {
-        "dataset": dataset,
-        "api_corpus_list": eval_api_corpus,
-        "retrieval_max_length": retriever_max_seq_length,
-        "retrieval_tokenizer": retr_tokenizer,
-        "batch_size": eval_batch_size,
-    }
-    eval_triplet_dataloader, eval_triplets = get_eval_dataloader(**eval_data_config)
-
-    logger.info("Computing rank accuracy using DeviceAwareInformationRetrievalEvaluator")
-    ranks, ndcg_scores, scores = evaluate_with_retrieval_evaluator(
-        retr_model,
-        eval_triplet_dataloader,
-        eval_triplets,
-        None,
-        device=device,
+    evaluator = create_api_evaluator(
+        triplets,
+        eval_api_corpus,
+        batch_size=eval_batch_size,
+        name=eval_name,
         k_values_accuracy=k_eval_values_accuracy,
-        k_values_ndcg=k_eval_values_ndcg,
-        api_corpus=eval_api_corpus,
-        retr_tokenizer=retr_tokenizer,
-        dataset_name=dataset_name
+        k_values_ndcg=k_eval_values_ndcg
     )
 
-    print("\nEVALUATION")
-    print("*" * 50)
-    print(">>> R@K")
-    for k, rank in zip(k_eval_values_accuracy, ranks):
-        print(f"RANK@{k}: {rank:.2f}%")
-    print("-" * 30)
-    print(">>> NDCG@K")
-    for k, ndcg in zip(k_eval_values_ndcg, ndcg_scores):
-        print(f"NDCG@{k}: {ndcg:.2f}")
-    print("*" * 50)
-    print("\n")
+    logger.info(f"Computing evaluation scores")
+    scores = evaluator(st_retr_model)
+    
+    if hasattr(run_evaluation, 'first_run') == False:
+        logger.info(f"Score structure: {list(scores.keys())}")
+        run_evaluation.first_run = True
 
-    log_eval = {}
-    for k, rank in zip(k_eval_values_accuracy, ranks):
-        log_eval[f"RANK@{k}"] = rank
-    for k, ndcg in zip(k_eval_values_ndcg, ndcg_scores):
-        log_eval[f"NDCG@{k}"] = ndcg
+    log_to_wandb(scores, epoch=epoch, steps=steps, prefix=eval_name)
 
-    # wandb.log(log_eval)
+    ranks = []
+    ndcg_scores_list = []
+    acc_k_scores = scores.get('cosine', {}).get('accuracy@k', {})
+    for k in k_eval_values_accuracy:
+        ranks.append(acc_k_scores.get(k, 0.0) * 100)
+
+    ndcg_k_scores = scores.get('cosine', {}).get('ndcg@k', {})
+    for k in k_eval_values_ndcg:
+        ndcg_scores_list.append(ndcg_k_scores.get(k, 0.0))
 
     retr_model.train()
     torch.cuda.empty_cache()
 
-    return ranks, ndcg_scores, scores
+    return ranks, ndcg_scores_list, scores
+
+run_evaluation.first_run = False
 
 
-def train(dataset : Dataset,
-          dataset_name : str,
-          retr_tokenizer : AutoTokenizer, 
-          retr_model : AutoModel,
-          infer_tokenizer : AutoTokenizer,
-          infer_model : AutoModelForCausalLM,
-          train_api_corpus : List[str],
-          eval_api_corpus : List[str],
-          data_collator_completion : DataCollatorMixin,
-          eval_strategy : str = "epoch",
-          eval_steps : float = None, # Changed type hint to float
-          n_reembedding_steps : int = None,
-          prompt_template : str = "",
-          instruction_prompt : str = "",
-          lambda_loss : float = 0.2,
-          beta : float = 1,
-          gamma : float = 1,
-          preference_weight : float = 0.1,
-          num_epochs : int = 10,
-          learning_rate : float = 1e-4,
-          scheduler_type : str = "cosine",
-          warmup_ratio : float = 0.1, # Added warmup_ratio
-          retriever_max_seq_length : int = 514,
-          inference_max_seq_length : int = 1024,
-          number_of_neg_examples : int = 3,
-          train_batch_size : int = 2,
-          eval_batch_size : int = 2,
-          preprocessing_batch_size : int = 4,
-          log_freq :  int = 100,
-          k_eval_values_accuracy: list = [1, 3, 5],
-          k_eval_values_ndcg: list = [1, 3, 5],
-          device : str = "cuda",
-          wandb_project_name : str = "",
-          wandb_run_name : str = "",
-          save_strategy : str = "epoch",
-          save_steps : int = None,
-          save_dir : str = "./checkpoints",
-          max_checkpoints : int = None):
+def train(dataset: Dataset,
+           dataset_name: str,
+           retr_tokenizer: AutoTokenizer,
+           retr_model: AutoModel,
+           infer_tokenizer: AutoTokenizer,
+           infer_model: AutoModelForCausalLM,
+           train_api_corpus: List[str],
+           eval_api_corpus: List[str],
+           data_collator_completion: DataCollatorMixin,
+           eval_strategy: str = "epoch",
+           eval_steps: float = None,
+           n_reembedding_steps: int = None,
+           prompt_template: str = "",
+           instruction_prompt: str = "",
+           lambda_loss: float = 0.2,
+           beta: float = 1,
+           gamma: float = 1,
+           preference_weight: float = 0.1,
+           num_epochs: int = 10,
+           learning_rate: float = 1e-4,
+           scheduler_type: str = "cosine",
+           warmup_ratio: float = 0.1,
+           retriever_max_seq_length: int = 514,
+           inference_max_seq_length: int = 1024,
+           number_of_neg_examples: int = 3,
+           train_batch_size: int = 2,
+           eval_batch_size: int = 2,
+           preprocessing_batch_size: int = 4,
+           log_freq: int = 100,
+           k_eval_values_accuracy: list = [1, 3, 5],
+           k_eval_values_ndcg: list = [1, 3, 5],
+           device: str = "cuda",
+           wandb_project_name: str = "",
+           wandb_run_name: str = "",
+           save_strategy: str = "epoch",
+           save_steps: int = None,
+           save_dir: str = "./checkpoints",
+           max_checkpoints: int = None):
 
-
-
-    # Initialize wandb
     config = {
         "beta" : beta,
         "gamma" : gamma,
@@ -355,18 +395,19 @@ def train(dataset : Dataset,
         "inference_max_seq_length" : inference_max_seq_length,
         "epochs" : num_epochs,
         "dataset" : dataset_name,
-        "embedding_update_steps" : len(dataset["train"]) // n_reembedding_steps,
+        "embedding_update_steps" : len(dataset["train"]) // n_reembedding_steps if n_reembedding_steps else "N/A",
         "train_data_samples" : len(dataset["train"])
     }
 
-    # wandb.init(project=wandb_project_name, 
-    #            name=wandb_run_name,
-    #            config=config)
-    # wandb.watch(retr_model, log_freq=log_freq)
+    run_name = wandb_run_name or f"PORTS-{dataset_name}-{num_epochs}ep"
+    logger.info(f"Initializing W&B with run name: {run_name}")
+    wandb.init(project=wandb_project_name, name=run_name)
+    wandb.config.update(config)
+    wandb.watch(retr_model, log_freq=log_freq)
+
     infer_model.eval()
     
-    # First evaluation
-    logger.info(f"Starting Initial Evaluation")
+    logger.info(f"Starting initial evaluations")
     eval_config = {
         "retr_model" : retr_model,
         "retr_tokenizer" : retr_tokenizer,
@@ -378,23 +419,31 @@ def train(dataset : Dataset,
         "device" : device,
         "k_eval_values_accuracy" : k_eval_values_accuracy,
         "k_eval_values_ndcg" : k_eval_values_ndcg,
-        "dataset_name" : dataset_name
+        "dataset_name" : dataset_name,
+        "eval_name": "eval",
+        "epoch": 0,
+        "steps": 0
     }
     run_evaluation(**eval_config)
-    
+
+    logger.info(f"Starting Initial Evaluation (Train)")
+    train_eval_config = eval_config.copy()
+    train_eval_config["eval_api_corpus"] = train_api_corpus
+    train_eval_config["eval_name"] = "train_eval"
+    run_evaluation(**train_eval_config)
 
     optimizer = torch.optim.AdamW(retr_model.parameters(), lr=learning_rate)
 
     ds_length = len(dataset["train"])
     n_iters = ds_length / train_batch_size + ds_length % train_batch_size
-    num_training_steps = num_epochs * n_iters #len(triplet_dataloader)
-    num_warmup_steps = int(num_training_steps * warmup_ratio) # Calculate warmup steps
+    num_training_steps = num_epochs * n_iters
+    num_warmup_steps = int(num_training_steps * warmup_ratio)
     logger.info(f"Total training steps: {num_training_steps}, Warmup steps: {num_warmup_steps} ({warmup_ratio*100}%)")
 
     lr_scheduler = get_scheduler(
         scheduler_type,
         optimizer=optimizer,
-        num_warmup_steps=num_warmup_steps, # Use calculated warmup steps
+        num_warmup_steps=num_warmup_steps,
         num_training_steps=num_training_steps,
     )
 
@@ -407,7 +456,6 @@ def train(dataset : Dataset,
         data_splits = []
 
         if not n_reembedding_steps:
-            # never re-embed corpus
             data_splits = [dataset]
         else:
             subsplit_len = ds_length // n_reembedding_steps
@@ -422,6 +470,7 @@ def train(dataset : Dataset,
 
         logger.info(f"Starting training epoch {epoch+1}/{num_epochs}")
         curr_global_step = 0
+        epoch_loss = 0.0
 
         for ds in data_splits:
 
@@ -442,39 +491,37 @@ def train(dataset : Dataset,
             }
             triplet_dataloader = get_train_dataloader(**train_data_config)
 
-            # Calculate evaluation step interval if strategy is 'steps'
             steps_per_split = len(triplet_dataloader)
             evaluation_step_interval = None
             if eval_strategy == "steps" and eval_steps is not None:
                 if not (0 < eval_steps <= 1):
                     raise ValueError("eval_steps must be a float between 0 (exclusive) and 1 (inclusive) when eval_strategy is 'steps'")
-                evaluation_step_interval = max(1, int(steps_per_split * eval_steps)) # Ensure at least 1 step
+                evaluation_step_interval = max(1, int(steps_per_split * eval_steps))
                 logger.info(f"Evaluation strategy: 'steps'. Evaluating every {evaluation_step_interval} steps ({eval_steps*100:.2f}% of {steps_per_split} steps in this split).")
 
-
-            pbar = tqdm(enumerate(triplet_dataloader), total=len(triplet_dataloader), desc="Training PORT with RePlug+ORPO")
+            pbar = tqdm(enumerate(triplet_dataloader), 
+                        total=len(triplet_dataloader), 
+                        desc=f"Epoch {epoch+1}/{num_epochs}",
+                        miniters=max(1, len(triplet_dataloader)//20))
+            
             for bid, batch in pbar:
                 curr_global_step += 1
 
                 bs = batch["query"]["input_ids"].shape[0]
 
-                pos_labels = batch["labels_pos"]    # [bs, max_seq_len]
-                neg_labels = batch["labels_neg"]    # bs * [n_neg_docs, max_seq_len]
+                pos_labels = batch["labels_pos"]
+                neg_labels = batch["labels_neg"]
 
-                queries = batch["query"]            # [bs, max_seq_len]
-                pos_docs = batch["positive"]        # [bs, max_seq_len]
-                neg_docs =  batch["negative"]       # bs * [n_neg_docs, max_seq_len]
-
+                queries = batch["query"]
+                pos_docs = batch["positive"]
+                neg_docs =  batch["negative"]
 
                 n_neg_docs = neg_docs[0]["input_ids"].shape[0]
 
-                # > Compute positive-negative similarities
-                pos_simialrity = compute_similarity(retr_model, queries, pos_docs).view(bs,-1)  # [bs,1]
-
+                pos_simialrity = compute_similarity(retr_model, queries, pos_docs).view(bs,-1)
 
                 neg_similarity = []
                 for nid in range(n_neg_docs):
-                    # consider the i-th negative document from each batch
                     data = {
                         k : torch.stack([neg_docs[bid][k][nid,:] for bid in range(bs)]) for k in ['input_ids', 'attention_mask']
                     }
@@ -483,24 +530,19 @@ def train(dataset : Dataset,
                                                             data).view(bs,-1)
                     neg_similarity.append(this_neg_similarity)
                 
-
                 neg_similarity = torch.stack(neg_similarity, dim=-1)
-                similarities = torch.cat((pos_simialrity, neg_similarity.squeeze(1)), dim=-1) # [bs, 1+n_neg_docs]
+                similarities = torch.cat((pos_simialrity, neg_similarity.squeeze(1)), dim=-1)
 
-
-                # Normalize and weight similarities into retrieval probabilities
-                similarities = similarities / gamma # weight probabilities with the set hyperparameter
+                similarities = similarities / gamma
 
                 Pr_retr = compute_Pr(
                     similarities = similarities,
                     axis = -1
                 )
 
-                # > Get prompts
                 input_prompt_pos = batch["q_pos_prompt"]
                 input_prompt_neg = batch["q_neg_prompt"]
 
-                # > Inference on the model
                 input_prompt_pos = {k : input_prompt_pos[k].to(device) for k in input_prompt_pos}
                 input_prompt_neg = [{k : neg_docs_trip[k].to(device) for k in neg_docs_trip} for neg_docs_trip in input_prompt_neg]
 
@@ -511,7 +553,6 @@ def train(dataset : Dataset,
                 neg_perplexity = []
 
                 with torch.no_grad():
-                    # Positive
                     pos_data = next(iter(DataLoader(
                         Dataset.from_dict(input_prompt_pos), 
                         shuffle=False, 
@@ -519,19 +560,17 @@ def train(dataset : Dataset,
                         collate_fn=data_collator_completion)))
 
                     pos_data = {k: v.to(device) for k, v in pos_data.items()}
-                    #pos_data["labels"] = pos_labels["input_ids"]
                     labels = pos_data.pop("labels")
 
                     outputs_pos = infer_model(**pos_data)
 
                     pos_perplexity = get_perplexity(outputs=outputs_pos, 
-                                                    input_ids=labels,#pos_data["input_ids"], 
+                                                    input_ids=labels,
                                                     attention_mask=pos_data["attention_mask"],
                                                     padding_token_ids=retr_tokenizer.pad_token_id)
                     del outputs_pos, pos_data
                     torch.cuda.empty_cache()
 
-                    # Negatives
                     for n_id in range(n_neg_docs):
                         neg_data = next(iter(DataLoader(
                             Dataset.from_dict(
@@ -542,36 +581,29 @@ def train(dataset : Dataset,
                             collate_fn=data_collator_completion)))
 
                         neg_data = {k: v.to(device) for k, v in neg_data.items()}
-                        #neg_data["labels"] = torch.stack([neg_labels[bid]["input_ids"][n_id,:] for bid in range(bs)], dim=0)
-                        #neg_data["labels"] = pos_labels["input_ids"].to(device)
                         labels = neg_data.pop("labels")
                         
                         outputs_neg = infer_model(**neg_data)
 
                         neg_perplexity.append(get_perplexity(outputs=outputs_neg, 
-                                                            input_ids=labels,#neg_data["labels"],#neg_data["input_ids"],
+                                                            input_ids=labels,
                                                             attention_mask=neg_data["attention_mask"],
                                                             padding_token_ids=retr_tokenizer.pad_token_id))
 
                         del outputs_neg, neg_data
                         torch.cuda.empty_cache()
 
-                # Compute Q
                 neg_perplexity = torch.stack(neg_perplexity, dim=-1)
                 concat_perplexities = torch.cat((pos_perplexity.unsqueeze(0).T, neg_perplexity), dim=-1)
-                concat_perplexities = concat_perplexities / beta # weight perplexities with the set hyperparameter
+                concat_perplexities = concat_perplexities / beta
                 
                 Q = F.softmax(concat_perplexities, dim=-1)
 
                 del concat_perplexities
                 torch.cuda.empty_cache()
 
-                # >> Compute losses
-
-                # - Probability-Perplexit Odds Ratio
                 ppl_pr_KL_loss = compute_loss(Q, Pr_retr, kl_div)
 
-                # - Odds Preference Alignment
                 pref_loss = 0
                 pos_rewards, neg_rewards = [], []
                 pref_ratio, maean_prob_ratio = 0, 0
@@ -579,7 +611,6 @@ def train(dataset : Dataset,
                 pos_retrieval_prob = Pr_retr[:, 0]
                 neg_retrieval_probs = Pr_retr[:, 1:]
 
-                # for each pair (pos, neg_i)
                 for neg_i in range(n_neg_docs):
                     neg_retrieval_prob = neg_retrieval_probs[:, neg_i]
                     
@@ -589,71 +620,70 @@ def train(dataset : Dataset,
                         beta=preference_weight
                     )
                     pref_loss += _pref_loss.mean()
-                    pos_rewards.append(_pos_reward.mean())  # weighted log retr prob (w = beta) for the positive sample
-                    neg_rewards.append(_neg_reward.mean())  # weighted log retr prob (w = beta) for the negative sample
-                    pref_ratio += _pref_ratio               # average unweighed pref loss
-                    maean_prob_ratio += _maean_prob_ratio      # average log ration
+                    pos_rewards.append(_pos_reward.mean())
+                    neg_rewards.append(_neg_reward.mean())
+                    pref_ratio += _pref_ratio
+                    maean_prob_ratio += _maean_prob_ratio
 
                 pref_loss /= n_neg_docs
                 pref_ratio /= n_neg_docs
                 maean_prob_ratio /= n_neg_docs
 
-                # > Aggregate loss
                 loss = ppl_pr_KL_loss - lambda_loss * pref_loss
 
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(retr_model.parameters(), max_norm=1.0) # apply gradient clipping
+                torch.nn.utils.clip_grad_norm_(retr_model.parameters(), max_norm=1.0)
                 optimizer.step()
                 lr_scheduler.step()
                 
-
-                # Compute gradient norm
                 grad_norm = get_gradient_norm(retr_model)
 
                 optimizer.zero_grad()
                 
-
-                # how many times the probability of retrieving a positive overcome the one of retrieving a negative
                 pos_rewards = torch.tensor(pos_rewards)
                 neg_rewards = torch.tensor(neg_rewards)
                 retrieval_accuracy = (pos_rewards > neg_rewards).float()
 
-                pbar.set_postfix({'Loss': loss.item(), 'RePlug Loss' : ppl_pr_KL_loss.item(), "OPRO Loss" : -pref_loss.item(), "Retrieval Compared Accuracy" : retrieval_accuracy.mean().cpu().item()})
+                pbar.set_postfix({
+                    'loss': f"{loss.item():.4f}", 
+                    'RePlug': f"{ppl_pr_KL_loss.item():.4f}", 
+                    "ORPO": f"{-pref_loss.item():.4f}"
+                })
+                
+                epoch_loss += loss.item()
 
-
-                # if curr_global_step % log_freq == 0:
-                    
-                #     wandb.log({
-                #         "ports_loss": loss.item(),
-                #         "replug_loss": ppl_pr_KL_loss.item(),
-                #         "odds_ratio_loss": -pref_loss.item(),
-                #         "ratio_reward" : pref_ratio,
-                #         "retrieval_accuracy" : retrieval_accuracy.mean().cpu(), 
-                #         "positive_retrieval_probability" : pos_retrieval_prob.mean().cpu(),
-                #         "positive_log_probability" : pos_rewards.mean().cpu(),
-                #         "negative_retrieval_probability" : neg_retrieval_probs.mean().cpu(),
-                #         "negative_log_probability" : neg_rewards.mean().cpu(),
-                #         "positive_ppl" : pos_perplexity.mean().cpu(),
-                #         "positive_Q_ppl" : Q[:,0].mean().cpu(),
-                #         "positive_sim" : pos_simialrity.mean().cpu(),
-                #         "negative_sim" : neg_similarity.mean(-1).mean().cpu(),
-                #         "negative_ppl" : neg_perplexity.mean(-1).mean().cpu(),
-                #         "negative_Q_ppl" : Q[:,1:].mean(-1).mean().cpu(),
-                #         "mean_retr_prob_ration" : maean_prob_ratio,
-                #         "gradient_norm" : grad_norm,
-                #         "learning_rate": optimizer.param_groups[0]['lr'],
-                #         "epoch" : epoch + 1
-                #     })
+                if curr_global_step % log_freq == 0:
+                    log_metrics = {
+                        "loss/total": loss.item(),
+                        "loss/replug_kl": ppl_pr_KL_loss.item(),
+                        "loss/opro": -pref_loss.item(),
+                        "opro/ratio_reward": pref_ratio,
+                        "opro/retrieval_accuracy": retrieval_accuracy.mean().cpu(),
+                        "opro/mean_prob_ratio": maean_prob_ratio,
+                        "probabilities/positive_retrieval": pos_retrieval_prob.mean().cpu(),
+                        "probabilities/negative_retrieval": neg_retrieval_probs.mean().cpu(),
+                        "log_probabilities/positive": pos_rewards.mean().cpu(),
+                        "log_probabilities/negative": neg_rewards.mean().cpu(),
+                        "perplexity/positive": pos_perplexity.mean().cpu(),
+                        "perplexity/negative": neg_perplexity.mean(-1).mean().cpu(),
+                        "Q_values/positive": Q[:,0].mean().cpu(),
+                        "Q_values/negative": Q[:,1:].mean(-1).mean().cpu(),
+                        "similarity/positive": pos_simialrity.mean().cpu(),
+                        "similarity/negative": neg_similarity.mean(-1).mean().cpu(),
+                        "optimizer/gradient_norm": grad_norm,
+                        "optimizer/learning_rate": optimizer.param_groups[0]['lr'],
+                        "progress/epoch": epoch + 1,
+                        "progress/step": curr_global_step
+                    }
+                    wandb.log(log_metrics, step=curr_global_step)
 
                 del Q, Pr_retr, ppl_pr_KL_loss, pref_loss, loss, pos_retrieval_prob, neg_retrieval_probs, neg_retrieval_prob
                 del neg_perplexity, pos_perplexity
                 del pref_ratio, retrieval_accuracy, pos_rewards, neg_rewards, maean_prob_ratio
                 torch.cuda.empty_cache()
 
-                # Check evaluation condition based on strategy and calculated interval
                 if eval_strategy == "steps" and evaluation_step_interval is not None and curr_global_step % evaluation_step_interval == 0 and curr_global_step != 0:
-
-                    logger.info(f"Starting evaluation epoch {epoch+1}/{num_epochs} - step {curr_global_step}")
+                    logger.info(f"Starting evaluation (Test/Validation) epoch {epoch+1}/{num_epochs} - step {curr_global_step}")
                     eval_config = {
                         "retr_model" : retr_model,
                         "retr_tokenizer" : retr_tokenizer,
@@ -665,26 +695,30 @@ def train(dataset : Dataset,
                         "device" : device,
                         "k_eval_values_accuracy" : k_eval_values_accuracy,
                         "k_eval_values_ndcg" : k_eval_values_ndcg,
-                        "dataset_name" : dataset_name
+                        "dataset_name" : dataset_name,
+                        "eval_name": "eval",
+                        "epoch": epoch + 1,
+                        "steps": curr_global_step
                     }
                     run_evaluation(**eval_config)
 
-                # Save checkpoint if strategy is 'steps'
+                    logger.info(f"Starting evaluation (Train) epoch {epoch+1}/{num_epochs} - step {curr_global_step}")
+                    train_eval_config = eval_config.copy()
+                    train_eval_config["eval_api_corpus"] = train_api_corpus
+                    train_eval_config["eval_name"] = "train_eval"
+                    run_evaluation(**train_eval_config)
+
                 if save_strategy == "steps" and save_steps and curr_global_step % save_steps == 0:
                     logger.info(f"Saving checkpoint at step {curr_global_step}")
                     retr_model.save_pretrained(os.path.join(save_dir, f"checkpoint-step-{curr_global_step}"))
 
-            # Save checkpoint if strategy is 'epoch'
             if save_strategy == "epoch":
                 logger.info(f"Saving checkpoint at epoch {epoch+1}")
                 ckpt_name = f"checkpoint-epoch-{epoch+1}"
                 retr_model.save_pretrained(os.path.join(save_dir, ckpt_name))
 
-                # Use R@1 as checkpoint score
-                #score = ranks[0]
                 saved_checkpoints.append((ckpt_name, ""))
                 if max_checkpoints and len(saved_checkpoints) > max_checkpoints:
-                    # remove worst
                     worst_ckpt = min(saved_checkpoints, key=lambda x: x[1])
                     worst_path = os.path.join(save_dir, worst_ckpt[0])
                     if os.path.exists(worst_path):
@@ -694,7 +728,7 @@ def train(dataset : Dataset,
                     saved_checkpoints.remove(worst_ckpt)
 
         if eval_strategy == "epoch":
-            logger.info(f"Starting evaluation epoch {epoch+1}/{num_epochs}")
+            logger.info(f"Starting evaluation (Test/Validation) epoch {epoch+1}/{num_epochs}")
             eval_config = {
                 "retr_model" : retr_model,
                 "retr_tokenizer" : retr_tokenizer,
@@ -704,26 +738,36 @@ def train(dataset : Dataset,
                 "eval_batch_size" : eval_batch_size,
                 "preprocessing_batch_size" : preprocessing_batch_size,
                 "device" : device,
-                "k_eval_values_accuracy" : k_eval_values_accuracy,
-                "k_eval_values_ndcg" : k_eval_values_ndcg,
-                "dataset_name" : dataset_name
+                "k_eval_values_accuracy": k_eval_values_accuracy,
+                "k_eval_values_ndcg": k_eval_values_ndcg,
+                "dataset_name": dataset_name,
+                "eval_name": "eval",
+                "epoch": epoch + 1,
+                "steps": curr_global_step
             }
-            ranks, ndcg_scores = run_evaluation(**eval_config)
+            run_evaluation(**eval_config)
+
+            logger.info(f"Starting evaluation (Train) epoch {epoch+1}/{num_epochs}")
+            train_eval_config = eval_config.copy()
+            train_eval_config["eval_api_corpus"] = train_api_corpus
+            train_eval_config["eval_name"] = "train_eval"
+            run_evaluation(**train_eval_config)
+
+        epoch_avg_loss = epoch_loss / curr_global_step if curr_global_step > 0 else 0
+        logger.info(f"Epoch {epoch+1}/{num_epochs} completed. Avg loss: {epoch_avg_loss:.4f}")
 
     logger.info("Training and evaluations are over")
-    # wandb.finish()
+
 
 def main():
     parser = argparse.ArgumentParser(description='PORT training')
     parser.add_argument('--dataset', type=str, default="bfcl", choices=["bfcl", "apibank", "apibench", "octopus", "octopus-overlap", "toole", "toole-overlap", "toolbench", "toole_90_10", "toole_85_15", "toole_75_25", "toole_70_30", "toole_50_50", "toole_35_65"], help='Dataset name for training and avaluation')
 
-    # Models
     parser.add_argument('--inference_model_name', type=str, default="llama3-8B", choices=["llama3-8B", "codestral-22B", "gemma2-2B", "groqLlama3Tool-8B"], help="Pseudo-Name of the generative model to use for function calling")
     parser.add_argument('--retrieval_model_name', type=str, default="FacebookAI/roberta-base", help="Name of the encoder model to use for retrieval")
     parser.add_argument('--retriever_max_seq_length', type=int, default=514, help="Max sequence length for retriever")
     parser.add_argument('--inference_max_seq_length', type=int, default=1024, help="Max sequence length for the inference model")
 
-    # General
     parser.add_argument('--do_train', action='store_true', default=False, help="Whether to run the training loop")
     parser.add_argument('--do_eval', action='store_true', default=False,  help="Whether to run the evaluation loop")
     parser.add_argument('--load_in_4bit', action='store_true', default=False, help="Whether to load the model in 4 bit")
@@ -740,7 +784,6 @@ def main():
     parser.add_argument('--max_checkpoints', type=int, default=None,
                         help="Maximum number of checkpoints to store.")
 
-    # Training/Eval config
     parser.add_argument('--max_train_samples', type=int, default=None, help="Maximum number of training instances to retain (all if set to None)")
     parser.add_argument('--max_eval_samples', type=int, default=None, help="Maximum number of evaluation instances to retain (all if set to None)")
 
@@ -755,7 +798,6 @@ def main():
     parser.add_argument('--preprocessing_batch_size', type=int, default=4, help="Batch size for the preprocessing phase")
     parser.add_argument('--padding_side', type=str, default="right", help="Padding side for tokenizers")
 
-    # Additional arguments based on the training and evaluation loop
     parser.add_argument('--lambda_loss', type=float, default=0.2, help="Lambda weighting factor parameter")
     
     parser.add_argument('--n_neg_examples', type=int, default=3, help="Number of negative samples to include in the triplets")
@@ -779,8 +821,6 @@ def main():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-
-    # > Load models
     logger.info("Loading Retrieval Model")
     retr_model_name = args.retrieval_model_name
     retr_tokenizer = AutoTokenizer.from_pretrained(retr_model_name)
@@ -831,8 +871,6 @@ def main():
 
     retr_tokenizer.padding_side=args.padding_side
 
-
-    # > Load dataset
     logger.info("Loading dataset")
     dataset_downloader = DatasetDownloader(dataset_name=args.dataset)
     dataset = dataset_downloader.get_dataset()
@@ -844,7 +882,6 @@ def main():
 
     dataset = dataset_downloader.post_process_answers(dataset)
 
-    # Sample from dataset if necessary - do this BEFORE creating API corpora
     if args.max_train_samples:
         n_inst = min(args.max_train_samples, len(dataset["train"]))
         selected_indices = random.sample(range(len(dataset["train"])), n_inst)
@@ -855,16 +892,16 @@ def main():
         selected_indices = random.sample(range(len(dataset["test"])), n_inst)
         dataset["test"] = dataset["test"].select(selected_indices)
 
-    logger.info(">>> DATASET")
-    print(dataset)
+    logger.info(">>> DATASET STATS")
+    for split_name in dataset:
+        logger.info(f"  {split_name}: {len(dataset[split_name])} examples")
 
-    # > Create tool corpora from the already filtered dataset
     logger.info("Defining tool corpora")
     
     train_api_corpus = list(set(dataset["train"]["api_description"]))
     eval_api_corpus = list(set(dataset["test"]["api_description"]))
 
-    logger.info(f"[STAST] Corpus--> Train: {len(train_api_corpus)} | Eval: {len(eval_api_corpus)}")
+    logger.info(f"Corpus sizes: Train: {len(train_api_corpus)} | Eval: {len(eval_api_corpus)}")
 
     logger.info("Setting the prompt and answer templates")
     prompt_template = PROMPT_TEMPLATES[pseudo_model_name]
@@ -872,14 +909,11 @@ def main():
     answer_template = prompt_template["answer_template"]
 
     response_template_ids = infer_tokenizer.encode(answer_template,
-                                                    add_special_tokens=False)#[2:]
+                                                    add_special_tokens=False)
 
     data_collator_completion = DataCollatorForCompletionOnlyLM(tokenizer=infer_tokenizer,
                                                                 response_template=response_template_ids,
                                                                 mlm=False)
-
-
-    # Start training/evaluation
 
     train_eval_config = {
         "dataset" : dataset,
@@ -924,11 +958,6 @@ def main():
     logger.info("Starting Training and Evaluation")
     train(**train_eval_config)
     logger.info("Success. Exit.")
-
-    logger.info("Pushing to hub")
-    mod_name = args.retrieval_model_name.split("/")[-1].strip()
-    #model_name = f"ToolRetriever/{mod_name}-{args.dataset}-ep{args.n_epochs}"
-    #retr_model.push_to_hub(model_name, private=True)
 
 
 if __name__ == "__main__":

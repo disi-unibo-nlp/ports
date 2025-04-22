@@ -508,11 +508,6 @@ def get_train_dataloader(dataset,
     """
     Create triplets and return train dataloader
     """
-    # triplets = create_triplets_with_unique_multiple_negatives(dataset,
-    #                                                           num_negatives_per_positive=num_neg_examples,
-    #                                                           split='train', 
-    #                                                           start_seed = epoch_number)
-
     triplets = create_triplets_with_similar_negatives(dataset,
                                                       retr_model,
                                                       retrieval_tokenizer,
@@ -520,11 +515,6 @@ def get_train_dataloader(dataset,
                                                       num_negatives_per_positive=num_neg_examples,
                                                       split='train',
                                                       preprocessing_batch_size=preprocessing_batch_size)
-
-    # with open("/call-me-replug/main/src_port/out/out_results.jsonl", "w") as f_out:
-    #     for tr in triplets:
-    #         json.dump(tr, f_out)
-    #         f_out.write("\n")
 
     triplet_dataset = TripletDataset(triplets)
 

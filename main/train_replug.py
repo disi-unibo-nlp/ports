@@ -1,4 +1,5 @@
 import os
+import argparse
 from transformers import (
     AutoTokenizer, 
     AutoModel, 
@@ -6,11 +7,10 @@ from transformers import (
     DataCollatorWithPadding,
     BitsAndBytesConfig,
     get_scheduler, 
-    HfArgumentParser,
     set_seed
 )
 from trl import DataCollatorForCompletionOnlyLM
-from datasets import Dataset, load_dataset
+from datasets import Dataset, DatasetDict
 import pandas as pd
 import numpy as np
 import torch
@@ -19,37 +19,74 @@ from torch.optim import AdamW
 import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss, KLDivLoss
 from huggingface_hub import login
-from src.replug.data_classes import PyTorchTrainingParams
 from src.replug.prompts import PROMPT_TEMPLATES, INSTRUCTIONS
 import logging
-import wandb
 from sentence_transformers import SentenceTransformer, models
+
+import sys
+import os
+import wandb
+from tqdm import tqdm
+from dotenv import load_dotenv
+
+# Set up environment
+load_dotenv()
+app_path = os.environ.get("APP_PATH", os.path.dirname(__file__))
+sys.path.insert(0, os.path.abspath(app_path))
 
 from src.port.retrieval_evaluator import DeviceAwareInformationRetrievalEvaluator
 from src.port.utils import embed_corpus
+from src.port.dataset_helper import DatasetDownloader
 
 
 def main():
-    parser = HfArgumentParser(PyTorchTrainingParams)
-    (args,) = parser.parse_args_into_dataclasses()
+    parser = argparse.ArgumentParser(description="RePlug training")
+    parser.add_argument('--dataset',                      type=str,   required=True, help="dataset name for DatasetDownloader")
+    parser.add_argument('--retr_model_name_or_path',     type=str,   required=True)
+    parser.add_argument('--infer_model_name_or_path',    type=str,   required=True)
+    parser.add_argument('--infer_model_type',            type=str,   choices=['llama3','llama3groq'], default='llama3')
+    parser.add_argument('--quantize',                    action='store_true')
+    parser.add_argument('--quantization_4bit',           action='store_true')
+    parser.add_argument('--batch_size',                  type=int,   default=2)
+    parser.add_argument('--num_train_epochs',            type=int,   default=5)
+    parser.add_argument('--num_retrieved_docs_per_query',type=int,   default=1)
+    parser.add_argument('--gamma_value',                 type=float, default=1.0)
+    parser.add_argument('--beta_value',                  type=float, default=1.0)
+    parser.add_argument('--learning_rate',               type=float, default=1e-5)
+    parser.add_argument('--lr_scheduler',                type=str,   default='linear')
+    parser.add_argument('--log_to_wandb',                action='store_true')
+    parser.add_argument('--wandb_proj_name',             type=str,   default='')
+    parser.add_argument('--verbose',                     action='store_true')
+    parser.add_argument('--eval_steps',                  type=float, default=None, help="fraction of steps for evaluation")
+    parser.add_argument('--k_eval_values_accuracy',     nargs='+', type=int, default=[1,3,5])
+    parser.add_argument('--k_eval_values_ndcg',         nargs='+', type=int, default=[1,3,5])
+    parser.add_argument('--seed',                        type=int,   default=42)
+    parser.add_argument('--trained_model_save_path',     type=str,   default=None)
+    parser.add_argument('--max_train_samples',           type=int,   default=None)
+    parser.add_argument('--max_eval_samples',            type=int,   default=None)
+    parser.add_argument('--retr_max_seq_length',         type=int,   default=512)
+    parser.add_argument('--warmup_ratio',                type=float, default=0.1, help="fraction of total training steps for warmup")
+    parser.add_argument('--save_strategy',               type=str,   default='epoch')
+    parser.add_argument('--save_dir',                    type=str,   default='/workspace/output')
+    args = parser.parse_args()
+
     log_wandb = args.log_to_wandb
     verbose = args.verbose
-    hf_key = os.getenv('HF_KEY')
-    login(token=hf_key)
 
     logger = logging.getLogger(__name__)
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)  # Set to INFO instead of DEBUG to reduce verbosity
     stream_handler = logging.StreamHandler()
-    stream_handler.setLevel(logging.DEBUG)
+    stream_handler.setLevel(logging.INFO)  # Set to INFO
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     stream_handler.setFormatter(formatter)
     logger.addHandler(stream_handler)
 
     def log_mem_usage(topic):
-        current_device = torch.cuda.current_device()
-        memory_allocated = torch.cuda.memory_allocated(current_device)
-        memory_reserved = torch.cuda.memory_reserved(current_device)
-        logger.info(f"{topic} A: {memory_allocated / 1024**2} MB, R: {memory_reserved / 1024**2} MB")
+        if verbose:  # Only log memory usage when verbose flag is set
+            current_device = torch.cuda.current_device()
+            memory_allocated = torch.cuda.memory_allocated(current_device)
+            memory_reserved = torch.cuda.memory_reserved(current_device)
+            logger.info(f"{topic} A: {memory_allocated / 1024**2:.1f}MB, R: {memory_reserved / 1024**2:.1f}MB")
 
     set_seed(args.seed)
     retr_model_name = args.retr_model_name_or_path
@@ -93,9 +130,8 @@ def main():
     k_values_ndcg = getattr(args, 'k_eval_values_ndcg', [1, 3, 5])
 
     if log_wandb:
-        wandb_key = os.getenv('WANDB_KEY')
-        name = args.wandb_proj_name
-        wandb.login(key=wandb_key)
+        run_name = args.wandb_proj_name or f"REPLUG-{args.dataset}-{args.num_train_epochs}ep"
+        logger.info(f"Initializing W&B with run name: {run_name}")
         wandb_config = {
             "retr_model_name_or_path": args.retr_model_name_or_path,
             "infer_model_name_or_path": args.infer_model_name_or_path,
@@ -108,16 +144,19 @@ def main():
             "beta_value": args.beta_value,
             "learning_rate": args.learning_rate,
             "lr_scheduler": args.lr_scheduler,
-            "dataset_path": args.dataset_path,
+            "dataset": args.dataset,
+            "warmup_ratio": args.warmup_ratio
         }
         if eval_steps_fraction is not None:
             wandb_config["eval_steps_fraction"] = eval_steps_fraction
+
         wandb.init(
-            project='fine-tuning-retriever',
-            name=name if name else f"training run - {args.dataset_path.split('/')[-1]}",
+            project=os.getenv('WANDB_PROJECT_NAME', 'REPLUG_Training'),
+            name=run_name,
             config=wandb_config
         )
-        wandb.watch(retr_model_base, log_freq=10)
+        log_freq = getattr(args, 'log_freq', 100)  # Default to 100 if not provided
+        wandb.watch(retr_model_base, log_freq=log_freq)
 
     infer_model.eval()
     retr_model_base.eval()
@@ -127,43 +166,58 @@ def main():
     prompt_template = PROMPT_TEMPLATES[infer_model_type]["prompt_template"]
     ANSWER = PROMPT_TEMPLATES[infer_model_type]["answer_template"]
     
-    dataset = load_dataset(args.dataset_path, "parsed_data")
-    if args.dataset_path == "ToolRetriever/ToolBench":
-        dataset['train'] = dataset['train'].filter(lambda x: x['group'] == 'G3' and bool(x['api_description'].strip()))
-        dataset = dataset['train'].train_test_split(test_size=0.3, seed=42)
-    elif args.dataset_path == "ToolRetriever/BFCL":
-        dataset = dataset['test'].train_test_split(test_size=0.3, seed=42)
-    elif args.dataset_path == "ToolRetriever/APIBench":
-        ds_dict = {}
-        for split in dataset:
-            for row in dataset[split]:
-                answ = row["answer"]
-                descr = row["api_description"]
+    # Load dataset using the DatasetDownloader
+    dataset_downloader = DatasetDownloader(dataset_name=args.dataset)
+    dataset = dataset_downloader.get_dataset()
+    dataset = dataset_downloader.post_process_answers(dataset)
 
-                if answ not in ds_dict: ds_dict[answ] = descr
+    # Determine evaluation split name
+    available_splits = list(dataset.keys())
+    logger.info(f"Available splits after processing: {available_splits}")
+    
+    # If we only have 'train' split, create a test split from it
+    if len(available_splits) == 1 and 'train' in available_splits:
+        logger.warning("Only 'train' split available. Creating test split from train data.")
+        # Create a train/test split (80/20)
+        split_dataset = dataset['train'].train_test_split(test_size=0.2, seed=42)
+        # Reconstruct the dataset with both splits
+        dataset = DatasetDict({
+            'train': split_dataset['train'],
+            'test': split_dataset['test']
+        })
+        available_splits = list(dataset.keys())
+        logger.info(f"Created splits: {available_splits}")
 
-        def unique_descr(example):
-            out = example
-            out["api_description"] = ds_dict[example["answer"]]
-            return out
+    # Now determine which split to use for evaluation
+    if 'test' in dataset:
+        eval_split_name = 'test'
+    elif 'validation' in dataset:
+        eval_split_name = 'validation'
+    else:
+        available_splits = list(dataset.keys())
+        raise ValueError(f"Could not find 'test' or 'validation' split for evaluation. Available splits: {available_splits}")
+    
+    logger.info(f"Dataset split sizes: Train={len(dataset['train'])}, {eval_split_name}={len(dataset[eval_split_name])}")
 
-        dataset = dataset.map(unique_descr)
-
-    dataset = dataset.shuffle(seed=42).flatten_indices()
-
-    # Handle max_train_samples like in main_train_port.py
+    # Sample data if max_train_samples or max_eval_samples is set
     if getattr(args, "max_train_samples", None):
         n_inst = min(args.max_train_samples, len(dataset["train"]))
         selected_indices = np.random.choice(len(dataset["train"]), n_inst, replace=False)
         dataset["train"] = dataset["train"].select(selected_indices)
 
-    query_column = args.query_column
-    response_column = args.response_column
-    train_documents = list(set(dataset["train"]["api_description"]))
-    eval_documents = list(set(dataset["test"]["api_description"]))
+    if getattr(args, "max_eval_samples", None):
+        n_inst = min(args.max_eval_samples, len(dataset[eval_split_name]))
+        logger.info(f"Sampling {n_inst} instances from {eval_split_name} split.")
+        selected_indices = np.random.choice(len(dataset[eval_split_name]), n_inst, replace=False)
+        dataset[eval_split_name] = dataset[eval_split_name].select(selected_indices)
+
+    # Define API documents consistently
+    train_api_corpus = list(set(dataset["train"]["api_description"]))
+    eval_api_corpus = list(set(dataset[eval_split_name]["api_description"]))
+    logger.info(f"Corpus sizes: Train={len(train_api_corpus)}, Eval={len(eval_api_corpus)}")
 
     def tokenize_function(samples):
-        return retr_tokenizer(samples[query_column], padding=True, truncation=True, return_tensors='pt')
+        return retr_tokenizer(samples["query"], padding=True, truncation=True, return_tensors='pt')
 
     input_training_dataset = dataset["train"].map(
         tokenize_function,
@@ -171,10 +225,10 @@ def main():
         remove_columns=dataset["train"].column_names
     )
 
-    input_eval_dataset = dataset["test"].map(
+    input_eval_dataset = dataset[eval_split_name].map(
         tokenize_function,
         batched=True,
-        remove_columns=dataset["test"].column_names
+        remove_columns=dataset[eval_split_name].column_names
     )
 
     batch_size = args.batch_size
@@ -192,14 +246,14 @@ def main():
 
     optimizer = AdamW(retr_model_base.parameters(), lr=args.learning_rate)
     num_training_steps = num_epochs * len(train_data_loader)
-    warmup_ratio = getattr(args, 'warmup_ratio', 0.1) # Get warmup_ratio, default 0.1
-    num_warmup_steps = int(num_training_steps * warmup_ratio) # Calculate warmup steps
-    logger.info(f"Total training steps: {num_training_steps}, Warmup steps: {num_warmup_steps} ({warmup_ratio*100}%)")
+    warmup_ratio = getattr(args, 'warmup_ratio', 0.1)
+    num_warmup_steps = int(num_training_steps * warmup_ratio)
+    logger.info(f"Training setup: Steps={num_training_steps}, Warmup={num_warmup_steps}, LR={args.learning_rate}")
 
     lr_scheduler = get_scheduler(
         args.lr_scheduler,
         optimizer=optimizer,
-        num_warmup_steps=num_warmup_steps, # Use calculated warmup steps
+        num_warmup_steps=num_warmup_steps,
         num_training_steps=num_training_steps,
     )
     cross_entropy = CrossEntropyLoss(reduction='none')
@@ -219,9 +273,14 @@ def main():
         return curr_bs, batch_data
 
     def get_top_k_docs_per_query(embedded_documents, batch_data, k, current_retr_model):
-        embedded_queries = current_retr_model.encode(batch_data[query_column], 
+        device = embedded_documents.device
+        embedded_queries = current_retr_model.encode(batch_data["query"], 
                                                      convert_to_tensor=True, 
                                                      show_progress_bar=False)
+        
+        # Ensure both tensors are on the same device
+        embedded_queries = embedded_queries.to(device)
+        
         embedded_documents_exp = embedded_documents.unsqueeze(0)
         embedded_queries_exp = embedded_queries.unsqueeze(1)
         cos_sim = F.cosine_similarity(embedded_documents_exp, embedded_queries_exp, dim=-1)
@@ -235,8 +294,8 @@ def main():
                 prompt_template.format(
                     INSTRUCTION,
                     documents[doc_index], 
-                    batch_data[query_column][data_index], 
-                    batch_data[response_column][data_index]
+                    batch_data["query"][data_index], 
+                    batch_data["answer"][data_index]
                 )
                 for i_th_doc in range(documents_per_query.size(1))
                 for data_index, doc_index in enumerate(documents_per_query[:, i_th_doc])
@@ -286,16 +345,37 @@ def main():
                                           device: str = "cuda",
                                           k_values_accuracy: list = [1, 3, 5],
                                           k_values_ndcg: list = [1, 3, 5],
-                                          eval_batch_size: int = 16):
-        logger.info("Preparing data for DeviceAwareInformationRetrievalEvaluator")
+                                          eval_batch_size: int = 16,
+                                          prefix: str = "eval",
+                                          epoch: int = -1,
+                                          steps: int = -1):
+        logger.info(f"Running {prefix} evaluation")
 
         queries = {}
         relevant_docs = {}
         corpus = {str(idx): doc for idx, doc in enumerate(eval_api_corpus)}
         api_to_doc_id = {api_desc: str(idx) for idx, api_desc in enumerate(eval_api_corpus)}
 
+        # First, collect all queries and their relevant API descriptions
+        query_to_positives = {}
         for i, example in enumerate(eval_dataset_split):
-            query_text = example[query_column]
+            query_text = example["query"]
+            positive_apis = example["api_description"]
+            
+            if not isinstance(positive_apis, list):
+                positive_apis = [positive_apis]
+                
+            if query_text not in query_to_positives:
+                query_to_positives[query_text] = set()
+            
+            for pos_api in positive_apis:
+                if pos_api in api_to_doc_id:
+                    query_to_positives[query_text].add(pos_api)
+
+        warning_count = 0
+        # Now create the actual queries and relevant_docs structure
+        for i, example in enumerate(eval_dataset_split):
+            query_text = example["query"]
             positive_apis = example["api_description"]
             
             if not isinstance(positive_apis, list):
@@ -305,11 +385,15 @@ def main():
             queries[query_id] = query_text
             
             current_relevant_ids = set()
-            for pos_api in positive_apis:
+            for pos_api in query_to_positives.get(query_text, set()):
                  if pos_api in api_to_doc_id:
                      current_relevant_ids.add(api_to_doc_id[pos_api])
                  else:
-                      logger.warning(f"Positive API '{pos_api[:50]}...' not found in corpus map for query '{query_text[:50]}...'")
+                      warning_count += 1
+                      if warning_count <= 3:
+                          logger.warning(f"Missing API: '{pos_api[:30]}...'")
+                      elif warning_count == 4:
+                          logger.warning(f"Suppressing further missing API warnings")
             
             if current_relevant_ids:
                  relevant_docs[query_id] = current_relevant_ids
@@ -323,50 +407,87 @@ def main():
         if not relevant_docs:
             logger.warning("Relevant docs mapping is empty for evaluator.")
 
+        # Create the evaluator similar to main_train_port.py approach
+        logger.info(f"Creating evaluator '{prefix}' with {len(queries)} queries, {len(corpus)} corpus items.")
         evaluator = DeviceAwareInformationRetrievalEvaluator(
             queries=queries,
             corpus=corpus,
             relevant_docs=relevant_docs,
-            ndcg_at_k=k_values_ndcg,
-            accuracy_at_k=k_values_accuracy,
-            device=device,
             batch_size=eval_batch_size,
+            name=prefix,
             show_progress_bar=True,
+            ndcg_at_k=k_values_ndcg,
+            accuracy_at_k=k_values_accuracy
         )
 
-        logger.info("Running evaluation with DeviceAwareInformationRetrievalEvaluator")
+        # Call the evaluator directly like in main_train_port.py, instead of using compute_metrices
+        scores = evaluator(retr_model_eval)
+
+        logger.info(f"{prefix.capitalize()} results at epoch {epoch}, step {steps}:")
         
-        scores = evaluator.compute_metrices(
-            model=retr_model_eval,
-            corpus_embeddings=corpus_embeddings
-        )
+        key_metrics = []
+        for k in [1, 3, 5]:
+            if f"cosine_accuracy@{k}" in scores:
+                key_metrics.append((f"R@{k}", scores[f"cosine_accuracy@{k}"]))
+            elif "accuracy@k" in scores.get("cosine", {}) and k in scores["cosine"]["accuracy@k"]:
+                key_metrics.append((f"R@{k}", scores["cosine"]["accuracy@k"][k]))
+                
+            if f"cosine_ndcg@{k}" in scores:
+                key_metrics.append((f"NDCG@{k}", scores[f"cosine_ndcg@{k}"]))
+            elif "ndcg@k" in scores.get("cosine", {}) and k in scores["cosine"]["ndcg@k"]:
+                key_metrics.append((f"NDCG@{k}", scores["cosine"]["ndcg@k"][k]))
+        
+        metrics_str = ", ".join([f"{name}: {value:.4f}" for name, value in key_metrics])
+        logger.info(f"  {metrics_str}")
 
-        if log_wandb:
+        if log_wandb and wandb.run:
+            log_prefix = f"{prefix}/"
             flat_scores = {}
-            for score_type, metrics in scores.items():
-                for metric_name, values in metrics.items():
-                    if isinstance(values, dict):
-                        for k_val, score in values.items():
-                            flat_scores[f"eval_{score_type}_{metric_name}_{k_val}"] = score
-                    else:
-                         flat_scores[f"eval_{score_type}_{metric_name}"] = values
-            wandb.log(flat_scores)
-            
-        logger.info("Evaluation Results:")
-        for score_type, metrics in scores.items():
-            logger.info(f"  Score Type: {score_type}")
-            for metric_name, values in metrics.items():
-                 if isinstance(values, dict):
-                     for k_val, score in values.items():
-                         logger.info(f"    {metric_name}@{k_val}: {score:.4f}")
-                 else:
-                     logger.info(f"    {metric_name}: {values:.4f}")
+
+            def flatten_dict(d, parent_key='', sep='/'):
+                items = []
+                for k, v in d.items():
+                    sanitized_k = str(k).replace('@', '_at_')
+                    new_key = f"{parent_key}{sep}{sanitized_k}" if parent_key else sanitized_k
+                    if isinstance(v, dict):
+                        items.extend(flatten_dict(v, new_key, sep=sep).items())
+                    elif isinstance(v, (int, float, np.number)):
+                        items.append((new_key, float(v)))
+                return dict(items)
+
+            flat_scores = flatten_dict(scores)
+            wandb_log_data = {f"{log_prefix}{k}": v for k, v in flat_scores.items()}
+            wandb_log_data[f"{prefix}/epoch"] = epoch
+            wandb_log_data[f"{prefix}/step"] = steps
+
+            logger.info(f"Logging metrics to W&B under '{log_prefix}' at epoch {epoch}, step {steps}")
+            wandb.log(wandb_log_data, step=steps)
 
         return scores
+
+    # def get_sentence_transformer(base_model, device="cuda"):
+    #     # Create a temporary directory and save both model and tokenizer
+    #     tmp_model_path = os.path.join("tmp_retr_model_eval")
+    #     # Save the model and tokenizer to the temporary path
+    #     base_model.save_pretrained(tmp_model_path)
+    #     retr_tokenizer.save_pretrained(tmp_model_path)
+        
+    #     # Create the transformer model using the saved path (which includes tokenizer)
+    #     transformer = models.Transformer(tmp_model_path)
+    #     pooling = models.Pooling(
+    #         transformer.get_word_embedding_dimension(),
+    #         pooling_mode_cls_token=True,
+    #         pooling_mode_mean_tokens=False,
+    #         pooling_mode_max_tokens=False,
+    #         pooling_mode_mean_sqrt_len_tokens=False
+    #     )
+    #     normalize = models.Normalize()
+    #     return SentenceTransformer(modules=[transformer, pooling, normalize], device=device)
 
     def get_sentence_transformer(base_model, device="cuda"):
         pooling_model = models.Pooling(base_model.config.hidden_size, pooling_mode_cls_token=True)
         return SentenceTransformer(modules=[base_model, pooling_model], device=device)
+
 
     steps_per_epoch = len(train_data_loader)
     evaluation_step_interval = None
@@ -388,20 +509,23 @@ def main():
     with torch.no_grad():
         embedded_eval_documents = embed_corpus(retr_model_eval_instance,
                                                retr_tokenizer,
-                                               eval_documents,
+                                               eval_api_corpus,
                                                device="cuda",
                                                batch_size=args.batch_size,
                                                max_length=args.retr_max_seq_length)
 
     evaluate_with_retrieval_evaluator(
         retr_model_eval=retr_model_eval_instance,
-        eval_dataset_split=dataset["test"],
-        eval_api_corpus=eval_documents,
+        eval_dataset_split=dataset[eval_split_name],
+        eval_api_corpus=eval_api_corpus,
         corpus_embeddings=embedded_eval_documents,
         device="cuda",
         k_values_accuracy=k_values_accuracy,
         k_values_ndcg=k_values_ndcg,
-        eval_batch_size=args.batch_size
+        eval_batch_size=args.batch_size,
+        prefix="initial_eval",
+        epoch=0,
+        steps=0
     )
     del embedded_eval_documents, retr_model_eval_instance
     torch.cuda.empty_cache()
@@ -409,11 +533,14 @@ def main():
     retr_model_base.train()
     global_step = 0
     for epoch in range(num_epochs):
-        for index, batch in enumerate(train_data_loader):
+        epoch_loss = 0
+        batch_count = 0
+
+        for index, batch in enumerate(tqdm(train_data_loader, 
+                                           desc=f"Epoch {epoch+1}/{num_epochs}", 
+                                           miniters=max(1, len(train_data_loader)//20))):
             current_step_in_epoch = index + 1
             global_step += 1
-            if verbose:
-                logger.info(f"Epoch: {epoch}, Batch: {index}")
             curr_bs, batch_data = parse_batch(dataset["train"], batch, index)
 
             retr_model_train_instance = get_sentence_transformer(retr_model_base, device="cuda")
@@ -422,11 +549,15 @@ def main():
             with torch.no_grad():
                 embedded_documents = embed_corpus(retr_model_train_instance,
                                                   retr_tokenizer,
-                                                  train_documents,
+                                                  train_api_corpus,
                                                   device="cuda",
                                                   batch_size=args.batch_size,
                                                   max_length=args.retr_max_seq_length)
 
+            # Ensure embedded_documents is on CUDA
+            if embedded_documents.device.type != "cuda":
+                embedded_documents = embedded_documents.to("cuda")
+                
             documents_per_query, similarities_per_query, _ = get_top_k_docs_per_query(
                 embedded_documents, batch_data, k, retr_model_train_instance
             )
@@ -437,7 +568,7 @@ def main():
             del similarities_per_query, _, embedded_documents, retr_model_train_instance
             torch.cuda.empty_cache()
             
-            prompts = get_prompts(prompt_template, train_documents, batch_data, documents_per_query)
+            prompts = get_prompts(prompt_template, train_api_corpus, batch_data, documents_per_query)
             inner_data_loader = prepare_inner_data_loader(prompts, curr_bs, inner_tokenize_function, inner_data_collator)
             perplexities = []
             for inner_batch in inner_data_loader:
@@ -461,8 +592,16 @@ def main():
             assert loss < 1e6, f"Loss is too large: {loss}"
             del perplexities, Q, Pr, inner_data_loader, inner_batch, documents_per_query
             torch.cuda.empty_cache()
-            if log_wandb:
-                wandb.log({"Training Loss": loss.item(), "Epoch": epoch, "Step": global_step})
+
+            epoch_loss += loss.item()
+            batch_count += 1
+
+            if log_wandb and global_step % min(20, max(1, len(train_data_loader)//5)) == 0:
+                wandb.log({
+                    "train/replug_loss": loss.item(),
+                    "train/learning_rate": optimizer.param_groups[0]['lr'],
+                    "progress/epoch": epoch + 1,
+                }, step=global_step)
 
             if evaluation_step_interval is not None and global_step % evaluation_step_interval == 0:
                 logger.info(f"--- Evaluating at Epoch {epoch+1}, Step {current_step_in_epoch}/{steps_per_epoch} (Global Step {global_step}) ---")
@@ -471,53 +610,63 @@ def main():
                 with torch.no_grad():
                     embedded_eval_documents = embed_corpus(retr_model_eval_instance,
                                                            retr_tokenizer,
-                                                           eval_documents,
+                                                           eval_api_corpus,
                                                            device="cuda",
                                                            batch_size=args.batch_size,
                                                            max_length=args.retr_max_seq_length)
 
                 evaluate_with_retrieval_evaluator(
                     retr_model_eval=retr_model_eval_instance,
-                    eval_dataset_split=dataset["test"],
-                    eval_api_corpus=eval_documents,
+                    eval_dataset_split=dataset[eval_split_name],
+                    eval_api_corpus=eval_api_corpus,
                     corpus_embeddings=embedded_eval_documents,
                     device="cuda",
                     k_values_accuracy=k_values_accuracy,
                     k_values_ndcg=k_values_ndcg,
-                    eval_batch_size=args.batch_size
+                    eval_batch_size=args.batch_size,
+                    prefix="eval",
+                    epoch=epoch + 1,
+                    steps=global_step
                 )
                 retr_model_base.train()
                 del embedded_eval_documents, retr_model_eval_instance
                 torch.cuda.empty_cache()
 
+        if batch_count > 0:
+            avg_epoch_loss = epoch_loss / batch_count
+            logger.info(f"Epoch {epoch+1}/{num_epochs} completed, avg loss: {avg_epoch_loss:.4f}")
+
         if run_end_of_epoch_eval:
-            logger.info(f"--- Evaluating after Epoch {epoch+1} ---")
-            retr_model_base.eval()
-            retr_model_eval_instance = get_sentence_transformer(retr_model_base, device="cuda")
-            with torch.no_grad():
-                embedded_eval_documents = embed_corpus(retr_model_eval_instance,
-                                                       retr_tokenizer,
-                                                       eval_documents,
-                                                       device="cuda",
-                                                       batch_size=args.batch_size,
-                                                       max_length=args.retr_max_seq_length)
+            if evaluation_step_interval is None or global_step % evaluation_step_interval != 0:
+                logger.info(f"--- Evaluating after Epoch {epoch+1} (Global Step {global_step}) ---")
+                retr_model_base.eval()
+                retr_model_eval_instance = get_sentence_transformer(retr_model_base, device="cuda")
+                with torch.no_grad():
+                    embedded_eval_documents = embed_corpus(retr_model_eval_instance,
+                                                           retr_tokenizer,
+                                                           eval_api_corpus,
+                                                           device="cuda",
+                                                           batch_size=args.batch_size,
+                                                           max_length=args.retr_max_seq_length)
 
-            evaluate_with_retrieval_evaluator(
-                retr_model_eval=retr_model_eval_instance,
-                eval_dataset_split=dataset["test"],
-                eval_api_corpus=eval_documents,
-                corpus_embeddings=embedded_eval_documents,
-                device="cuda",
-                k_values_accuracy=k_values_accuracy,
-                k_values_ndcg=k_values_ndcg,
-                eval_batch_size=args.batch_size
-            )
-            retr_model_base.train()
-            del embedded_eval_documents, retr_model_eval_instance
-            torch.cuda.empty_cache()
+                evaluate_with_retrieval_evaluator(
+                    retr_model_eval=retr_model_eval_instance,
+                    eval_dataset_split=dataset[eval_split_name],
+                    eval_api_corpus=eval_api_corpus,
+                    corpus_embeddings=embedded_eval_documents,
+                    device="cuda",
+                    k_values_accuracy=k_values_accuracy,
+                    k_values_ndcg=k_values_ndcg,
+                    eval_batch_size=args.batch_size,
+                    prefix="eval",
+                    epoch=epoch + 1,
+                    steps=global_step
+                )
+                retr_model_base.train()
+                del embedded_eval_documents, retr_model_eval_instance
+                torch.cuda.empty_cache()
 
-    if verbose:
-        logger.info("TRAINING FINISHED.")
+    logger.info("Training complete.")
     if log_wandb:
         wandb.finish()
     if args.trained_model_save_path:

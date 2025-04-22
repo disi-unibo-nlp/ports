@@ -223,8 +223,9 @@ class DatasetDownloader():
             print(f"Loading {self.data_path} - {self.data_sub_split}")
             ds = load_dataset(self.data_path, self.data_sub_split)
 
-        # if self.dataset_name == "toolbench":
-        #     ds = ds.filter(lambda x : x["group"] == "G3")
+        if self.dataset_name == "toolbench":
+            print(">>>>> TOOLBENCH GROUP: G3")
+            ds = ds.filter(lambda x : x["group"] == "G3")
         
         if self.dataset_name == "bfcl":
             unique_k = list(ds.keys())[0]

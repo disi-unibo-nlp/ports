@@ -39,19 +39,6 @@ load_dotenv()
 app_path = os.environ.get("APP_PATH", os.path.dirname(__file__))
 sys.path.insert(0, os.path.abspath(app_path))
 
-try:
-    from src.port.dataset_helper import DatasetDownloader
-except ImportError:
-    logger.error("Failed to import DatasetDownloader. Ensure src.port is in the Python path.")
-    class DatasetDownloader:
-        def __init__(self, dataset_name):
-            logger.error("Using dummy DatasetDownloader.")
-            self.dataset_name = dataset_name
-        def get_dataset(self):
-            raise NotImplementedError("Dummy DatasetDownloader cannot load data.")
-        def post_process_answers(self, dataset):
-            logger.warning("Dummy DatasetDownloader cannot post-process.")
-            return dataset
 
 from src.utils.util_functions import ColoredFormatter
 
@@ -77,6 +64,20 @@ console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setFormatter(ColoredFormatter())
 logger.addHandler(console_handler)
 
+try:
+    from src.port.dataset_helper import DatasetDownloader
+except ImportError:
+    logger.error("Failed to import DatasetDownloader. Ensure src.port is in the Python path.")
+    class DatasetDownloader:
+        def __init__(self, dataset_name):
+            logger.error("Using dummy DatasetDownloader.")
+            self.dataset_name = dataset_name
+        def get_dataset(self):
+            raise NotImplementedError("Dummy DatasetDownloader cannot load data.")
+        def post_process_answers(self, dataset):
+            logger.warning("Dummy DatasetDownloader cannot post-process.")
+            return dataset
+
 
 def create_api_triplets(dataset_split,
                         api_corpus: List[str],
@@ -85,11 +86,22 @@ def create_api_triplets(dataset_split,
     triplets = []
     corpus_set = set(api_corpus)
     skipped_count = 0
-
-    logger.info(f"Creating triplets from dataset split with {len(dataset_split)} items.")
-    logger.info(f"Using corpus of size {len(api_corpus)}.")
-
-    for row in tqdm(dataset_split, desc="Creating API triplets"):
+    
+    # First, build a mapping of queries to their positive API descriptions
+    query_to_positives = {}
+    for row in dataset_split:
+        query = row.get("query")
+        positive_api = row.get("api_description")
+        
+        if query and positive_api:
+            if query not in query_to_positives:
+                query_to_positives[query] = set()
+            query_to_positives[query].add(positive_api)
+    
+    logger.info(f"Found {len(query_to_positives)} unique queries with positive examples")
+    logger.info(f"Creating triplets from dataset ({len(dataset_split)} examples)")
+    
+    for row in tqdm(dataset_split, desc="Creating triplets", mininterval=2.0):
         query = row.get("query")
         positive_api = row.get("api_description")
 
@@ -98,14 +110,14 @@ def create_api_triplets(dataset_split,
             continue
 
         if positive_api not in corpus_set:
-            logger.warning(f"Positive API not found in corpus: {positive_api[:100]}...")
             skipped_count += 1
             continue
-
-        potential_negatives = list(corpus_set - {positive_api})
+        
+        # Get all positives for this query and exclude them from potential negatives
+        query_positives = query_to_positives.get(query, {positive_api})
+        potential_negatives = list(corpus_set - query_positives)
 
         if not potential_negatives:
-            logger.warning(f"No potential negatives found for query: {query[:100]}...")
             skipped_count += 1
             continue
 
@@ -123,53 +135,66 @@ def create_api_triplets(dataset_split,
             if clean_query and clean_pos and clean_neg:
                 triplets.append((clean_query, clean_pos, clean_neg))
             else:
-                logger.warning(f"Skipping triplet due to empty field after cleaning.")
                 skipped_count += 1
 
-    logger.info(f"Created {len(triplets)} triplets.")
-    if skipped_count > 0:
-        logger.warning(f"Skipped {skipped_count} rows due to missing data or lack of negatives.")
+    logger.info(f"Created {len(triplets)} triplets, skipped {skipped_count} rows")
 
     if triplets:
-        logger.info("Sample API triplets:")
-        for i, triplet in enumerate(triplets[:3]):
-            a, p, n = triplet
-            logger.info(f"  Example {i+1}:")
-            logger.info(f"    Anchor (Query): {a[:100]}{'...' if len(a) > 100 else ''}")
-            logger.info(f"    Positive (API): {p[:100]}{'...' if len(p) > 100 else ''}")
-            logger.info(f"    Negative (API): {n[:100]}{'...' if len(n) > 100 else ''}")
+        a, p, n = triplets[0]
+        logger.info(f"Sample triplet: Q: '{a[:50]}...', API: '{p[:50]}...', Neg: '{n[:50]}...'")
 
     return triplets
 
 
 def log_to_wandb(score_dict: dict,
                  epoch: int,
-                 steps: int) -> None:
-    logger.info(f"Logging metrics to W&B at epoch {epoch}, step {steps}")
-    things_to_score = {"epoch": epoch, "steps": steps}
+                 steps: int,
+                 prefix: str = "eval") -> None:
+    """Logs metrics to W&B with structured keys."""
+    if wandb.run is None:
+        logger.warning("wandb.init() has not been called. Skipping wandb.log().")
+        return
 
-    if not isinstance(score_dict, dict):
-        things_to_score["score"] = float(score_dict)
-        logger.info(f"  score: {float(score_dict)}")
+    log_prefix = f"{prefix}/" if prefix else ""
+    logger.info(f"Logging {prefix} metrics to W&B at epoch {epoch}, step {steps}")
+
+    flat_scores = {}
+
+    def flatten_dict(d, parent_key='', sep='/'):
+        items = []
+        for k, v in d.items():
+            sanitized_k = str(k).replace('@', '_at_')
+            new_key = f"{parent_key}{sep}{sanitized_k}" if parent_key else sanitized_k
+            if isinstance(v, dict):
+                items.extend(flatten_dict(v, new_key, sep=sep).items())
+            elif isinstance(v, (int, float, np.number)):
+                items.append((new_key, float(v)))
+        return dict(items)
+
+    if isinstance(score_dict, dict):
+        flat_scores = flatten_dict(score_dict)
+    elif isinstance(score_dict, (int, float, np.number)):
+        flat_scores = {"score": float(score_dict)}
     else:
-        for main_key, main_value in score_dict.items():
-            if isinstance(main_value, dict):
-                for metric_key, metric_value in main_value.items():
-                    if isinstance(metric_value, dict):
-                        for k, v in metric_value.items():
-                            log_key = f"{main_key}_{metric_key}_{k}"
-                            if isinstance(v, (int, float, np.number)):
-                                things_to_score[log_key] = float(v)
-                                logger.info(f"  {log_key}: {float(v)}")
-                    elif isinstance(metric_value, (int, float, np.number)):
-                        log_key = f"{main_key}_{metric_key}"
-                        things_to_score[log_key] = float(metric_value)
-                        logger.info(f"  {log_key}: {float(metric_value)}")
-            elif isinstance(main_value, (int, float, np.number)):
-                things_to_score[main_key] = float(main_value)
-                logger.info(f"  {main_key}: {float(main_value)}")
+        logger.warning(f"Unsupported score_dict type for logging: {type(score_dict)}")
+        return
 
-    wandb.log(things_to_score)
+    wandb_log_data = {f"{log_prefix}{k}": v for k, v in flat_scores.items()}
+    wandb_log_data[f"{prefix}/epoch"] = epoch
+    wandb_log_data[f"{prefix}/step"] = steps
+
+    key_metrics = {k: v for k, v in flat_scores.items() if 'accuracy_at_1' in k or 'ndcg_at_1' in k}
+    for key, value in key_metrics.items():
+        logger.info(f"  {log_prefix}{key}: {value}")
+        
+    if len(key_metrics) < 3:
+        additional_count = 0
+        for k, v in flat_scores.items():
+            if k not in key_metrics and isinstance(v, (int, float)) and additional_count < 3:
+                logger.info(f"  {log_prefix}{k}: {v}")
+                additional_count += 1
+
+    wandb.log(wandb_log_data, step=steps)
 
 
 def create_api_evaluator(triplets: List[Tuple[str, str, str]],
@@ -187,8 +212,9 @@ def create_api_evaluator(triplets: List[Tuple[str, str, str]],
 
     query_count = 0
     anchor_to_query_id = {}
+    warning_count = 0
 
-    logger.info(f"Preparing evaluator '{name}' with {len(triplets)} triplets and {len(corpus)} corpus items.")
+    logger.info(f"Creating evaluator '{name}' with {len(triplets)} triplets")
 
     for anchor, positive, _ in triplets:
         if anchor not in anchor_to_query_id:
@@ -204,7 +230,11 @@ def create_api_evaluator(triplets: List[Tuple[str, str, str]],
             pos_doc_id = api_to_doc_id[positive]
             relevant_docs[query_id].add(pos_doc_id)
         else:
-            logger.warning(f"Positive API description not found in eval corpus map for query '{anchor[:50]}...': '{positive[:50]}...'")
+            warning_count += 1
+            if warning_count <= 5:
+                logger.warning(f"Missing API (showing 5/{warning_count}): '{positive[:30]}...'")
+            if warning_count == 6:
+                logger.warning(f"Additional missing APIs found. Suppressing further warnings.")
 
     if not queries:
         logger.error("No queries generated for the evaluator. Check input triplets and corpus.")
@@ -226,7 +256,7 @@ def create_api_evaluator(triplets: List[Tuple[str, str, str]],
         accuracy_at_k=k_values_accuracy
     )
 
-    logger.info(f"Created evaluator '{name}' with {len(queries)} queries, {len(corpus)} corpus docs.")
+    logger.info(f"Evaluator created with {len(queries)} queries, {len(corpus)} corpus items")
     return evaluator
 
 
@@ -236,7 +266,9 @@ def evaluate_on_test(model,
                      output_dir,
                      batch_size: int = 16,
                      k_values_accuracy: list = [1, 3, 5, 10],
-                     k_values_ndcg: list = [1, 3, 5, 10]) -> dict:
+                     k_values_ndcg: list = [1, 3, 5, 10],
+                     epoch: int = -1,
+                     steps: int = -1) -> dict:
     logger.info(f"Evaluating model on {len(test_triplets)} test triplets")
 
     if not test_triplets:
@@ -263,14 +295,19 @@ def evaluate_on_test(model,
     eval_end = time.time()
     eval_time = eval_end - eval_start
 
-    logger.info(f"Test evaluation completed in {eval_time:.2f} seconds")
-    logger.info(f"Test evaluation results:")
+    logger.info(f"Test evaluation completed in {eval_time:.2f}s. Key results:")
+    
+    key_metrics = {}
     for main_key, main_value in test_stats.items():
         if isinstance(main_value, dict):
             for metric_key, metric_value in main_value.items():
-                logger.info(f"  {main_key}_{metric_key}: {metric_value}")
-        else:
-            logger.info(f"  {main_key}: {main_value}")
+                if 'accuracy@1' in metric_key or 'ndcg@1' in metric_key:
+                    key_metrics[f"{main_key}_{metric_key}"] = metric_value
+        elif main_key in ['map', 'mrr']:
+            key_metrics[main_key] = main_value
+    
+    for key, value in key_metrics.items():
+        logger.info(f"  {key}: {value}")
 
     test_eval_path = os.path.join(output_dir, "test_eval_results.json")
     try:
@@ -312,13 +349,7 @@ def main(args):
         num_epochs = args.epochs
         model_save_path = args.output_dir
 
-        logger.info(f"Model configuration:")
-        logger.info(f"  Model name/path: {model_name}")
-        logger.info(f"  Batch size: {train_batch_size}")
-        logger.info(f"  Max sequence length: {retriever_max_seq_length}")
-        logger.info(f"  Epochs: {num_epochs}")
-        logger.info(f"  Output directory: {model_save_path}")
-        logger.info(f"  Pooling: {args.pooling}")
+        logger.info(f"Model: {model_name}, BS: {train_batch_size}, Epochs: {num_epochs}, Pooling: {args.pooling}")
 
         os.makedirs(model_save_path, exist_ok=True)
         logger.info(f"Ensured output directory exists: {model_save_path}")
@@ -335,13 +366,10 @@ def main(args):
             is_path = os.path.isdir(model_name)
 
             if args.use_pre_trained_model and not is_path:
-                logger.info("Loading pretrained SentenceTransformer model from Hugging Face.")
                 model = SentenceTransformer(model_name, trust_remote_code=True, device=device)
             elif is_path:
-                logger.info(f"Loading SentenceTransformer model from path: {model_name}")
                 model = SentenceTransformer(model_name, device=device)
             else:
-                logger.info("Creating new SentenceTransformer model from base transformer.")
                 word_embedding_model = models.Transformer(model_name,
                                                           max_seq_length=retriever_max_seq_length,
                                                           tokenizer_args={"trust_remote_code": True},
@@ -385,24 +413,22 @@ def main(args):
             args.evaluate_on_test = False
 
         if args.max_train_samples and args.max_train_samples < len(dataset[train_split_name]):
-            logger.info(f"Sampling {args.max_train_samples} instances from train split.")
             indices = random.sample(range(len(dataset[train_split_name])), args.max_train_samples)
             dataset[train_split_name] = dataset[train_split_name].select(indices)
 
         max_dev_samples = args.max_train_samples
         if max_dev_samples and max_dev_samples < len(dataset[dev_split_name]):
-            logger.info(f"Sampling {max_dev_samples} instances from dev split '{dev_split_name}'.")
             indices = random.sample(range(len(dataset[dev_split_name])), max_dev_samples)
             dataset[dev_split_name] = dataset[dev_split_name].select(indices)
 
         if args.evaluate_on_test:
             max_test_samples = args.max_train_samples
             if max_test_samples and max_test_samples < len(dataset[test_split_name]):
-                logger.info(f"Sampling {max_test_samples} instances from test split '{test_split_name}'.")
                 indices = random.sample(range(len(dataset[test_split_name])), max_test_samples)
                 dataset[test_split_name] = dataset[test_split_name].select(indices)
 
-        logger.info("Creating API corpora...")
+        logger.info(f"Dataset '{args.dataset}' loaded: {list(dataset.keys())}")
+
         required_field = 'api_description'
         if required_field not in dataset[train_split_name].column_names:
             raise ValueError(f"Required field '{required_field}' not found in train split.")
@@ -417,12 +443,8 @@ def main(args):
             eval_corpus_set.update(dataset[test_split_name][required_field])
         eval_api_corpus = list(eval_corpus_set)
 
-        logger.info(f"Train corpus size: {len(train_api_corpus)}")
-        logger.info(f"Eval corpus size: {len(eval_api_corpus)}")
-        if not train_api_corpus or not eval_api_corpus:
-            raise ValueError("API corpora are empty. Check dataset content.")
+        logger.info(f"Created corpora - Train: {len(train_api_corpus)}, Eval: {len(eval_api_corpus)}")
 
-        logger.info("Creating triplets...")
         train_triplets = create_api_triplets(dataset[train_split_name],
                                              train_api_corpus,
                                              args.negatives_per_sample,
@@ -438,10 +460,8 @@ def main(args):
                                                 eval_api_corpus,
                                                 args.negatives_per_sample,
                                                 args.random_negatives)
-            logger.info(f"Test triplets: {len(test_triplets)}")
 
-        logger.info(f"Train triplets: {len(train_triplets)}")
-        logger.info(f"Dev triplets: {len(dev_triplets)}")
+        logger.info(f"Train triplets: {len(train_triplets)}, Dev triplets: {len(dev_triplets)}")
 
         if not train_triplets:
             logger.error("No training triplets were generated. Cannot proceed.")
@@ -449,17 +469,11 @@ def main(args):
         if not dev_triplets:
             logger.warning("No development triplets were generated. Evaluation might fail or be meaningless.")
 
-        logger.info(f"Creating training dataset and dataloader [{len(train_triplets)} triplets]")
         train_examples = [InputExample(texts=[q, p, n]) for q, p, n in train_triplets]
         train_dataloader = DataLoader(train_examples, shuffle=True, batch_size=train_batch_size)
-        logger.info(f"Created training dataloader with {len(train_dataloader)} batches")
 
-        logger.info("Creating MultipleNegativesRankingLoss")
         train_loss = losses.MultipleNegativesRankingLoss(model=model)
 
-        logger.info("Creating evaluation setup")
-        
-        # Define k values for evaluation
         k_values_accuracy = getattr(args, 'k_eval_values_accuracy', [1, 3, 5, 10])
         k_values_ndcg = getattr(args, 'k_eval_values_ndcg', [1, 3, 5, 10])
 
@@ -478,31 +492,24 @@ def main(args):
             logger.warning("Cannot create development evaluator due to missing triplets or corpus.")
             ir_evaluator = None
 
-        logger.info(f"Data preparation finished in {time.time() - prep_start:.2f} seconds.")
-
-        # Calculate evaluation steps based on fraction if provided
-        evaluation_step_interval = 0 # Default: evaluate per epoch
+        evaluation_step_interval = 0
         steps_per_epoch = len(train_dataloader)
         num_training_steps = steps_per_epoch * num_epochs
-        num_warmup_steps = math.ceil(num_training_steps * args.warmup_ratio) # Use math.ceil for integer steps
-        logger.info(f"Total training steps: {num_training_steps}, Warmup steps: {num_warmup_steps} ({args.warmup_ratio*100}%)")
+        num_warmup_steps = math.ceil(num_training_steps * args.warmup_ratio)
+        logger.info(f"Training config: Steps: {num_training_steps}, Warmup: {num_warmup_steps}, Eval every: {evaluation_step_interval}")
 
         if ir_evaluator and args.eval_steps is not None and args.eval_steps > 0:
              if not (0 < args.eval_steps <= 1):
                  raise ValueError("eval_steps must be a float between 0 (exclusive) and 1 (inclusive)")
              evaluation_step_interval = max(1, int(steps_per_epoch * args.eval_steps))
-             logger.info(f"Evaluation strategy: 'steps'. Evaluating every {evaluation_step_interval} steps ({args.eval_steps*100:.2f}% of {steps_per_epoch} steps per epoch).")
         elif ir_evaluator:
-             logger.info(f"Evaluation strategy: 'epoch'. Evaluating every {steps_per_epoch} steps (at the end of each epoch).")
-             evaluation_step_interval = steps_per_epoch # Evaluate at the end of epoch if eval_steps <= 0 or None
+             evaluation_step_interval = steps_per_epoch
         else:
              logger.info("No evaluator available, skipping evaluation steps calculation.")
-
 
         wandb_run = None
         if not args.do_eval_only and not args.disable_wandb:
             run_name = f"SentTrans-{args.model_name.split('/')[-1]}-{args.dataset}-{datetime.now().strftime('%Y%m%d-%H%M')}"
-            logger.info(f"Initializing W&B with run name: {run_name}")
             try:
                 wandb_run = wandb.init(project="API-Retriever", name=run_name)
                 wandb.config.update(args)
@@ -511,20 +518,10 @@ def main(args):
                 wandb_run = None
 
         if ir_evaluator:
-            logger.info("Evaluating model before training...")
             eval_start = time.time()
             stats = ir_evaluator(model, output_path=model_save_path)
             eval_end = time.time()
             eval_time = eval_end - eval_start
-
-            logger.info(f"Initial evaluation completed in {eval_time:.2f} seconds")
-            logger.info(f"Initial evaluation results:")
-            for main_key, main_value in stats.items():
-                if isinstance(main_value, dict):
-                    for metric_key, metric_value in main_value.items():
-                        logger.info(f"  {main_key}_{metric_key}: {metric_value}")
-                else:
-                    logger.info(f"  {main_key}: {main_value}")
 
             initial_eval_path = os.path.join(model_save_path, "initial_eval_results.json")
             try:
@@ -543,32 +540,34 @@ def main(args):
                             return list(o)
                         raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
                     json.dump(stats, f_out, ensure_ascii=False, indent=2, default=default_serializer)
-                logger.info(f"Saved initial evaluation results to {initial_eval_path}")
             except Exception as e:
                 logger.error(f"Failed to save initial evaluation results: {e}")
 
             if wandb_run:
                 log_to_wandb({"initial_" + k: v for k, v in stats.items()}, epoch=0, steps=0)
-        else:
-            logger.warning("Skipping initial evaluation as evaluator could not be created.")
 
         if not args.do_eval_only:
-            logger.info("Starting training...")
             train_start = time.time()
 
-            callback_func = log_to_wandb if wandb_run else None
+            def wandb_callback(score, epoch, steps):
+                if hasattr(ir_evaluator, 'latest_scores') and ir_evaluator.latest_scores:
+                     log_to_wandb(ir_evaluator.latest_scores, epoch=epoch, steps=steps, prefix="eval")
+                else:
+                     log_to_wandb({"score": score}, epoch=epoch, steps=steps, prefix="eval")
+
+            callback_func = wandb_callback if wandb_run and ir_evaluator else None
 
             model.fit(
                 train_objectives=[(train_dataloader, train_loss)],
                 epochs=num_epochs,
-                warmup_steps=num_warmup_steps, # Use calculated warmup steps
+                warmup_steps=num_warmup_steps,
                 evaluator=ir_evaluator,
-                evaluation_steps=evaluation_step_interval, # Use calculated interval
+                evaluation_steps=evaluation_step_interval,
                 callback=callback_func,
                 use_amp=True,
                 checkpoint_path=model_save_path,
                 checkpoint_save_total_limit=args.checkpoint_save_total_limit,
-                checkpoint_save_steps=evaluation_step_interval, # Use calculated interval for checkpoints too
+                checkpoint_save_steps=evaluation_step_interval,
                 optimizer_params={"lr": args.lr},
                 scheduler=args.scheduler,
                 save_best_model=True if ir_evaluator else False,
@@ -578,58 +577,42 @@ def main(args):
 
             train_end = time.time()
             train_duration = train_end - train_start
-            logger.info(f"Training completed in {train_duration:.2f} seconds "
-                        f"({str(timedelta(seconds=int(train_duration)))})")
+            logger.info(f"Training completed in {train_duration:.2f}s ({str(timedelta(seconds=int(train_duration)))})")
 
             final_model_path = os.path.join(model_save_path, "final")
-            logger.info(f"Saving final model to {final_model_path}")
             model.save(final_model_path)
-            logger.info(f"Model saved successfully")
 
             if args.push_to_hub and os.environ.get('HF_TOKEN'):
                 repo_name = args.hub_repo_name or f"api-retriever-{args.model_name.split('/')[-1]}-{args.dataset}"
-                logger.info(f"Pushing model to Hugging Face Hub: {repo_name}")
                 try:
                     model.save_to_hub(repo_id=repo_name,
                                       commit_message="Add final trained model",
                                       private=not args.public_model,
                                       exist_ok=True)
-                    logger.info(f"Model pushed successfully to Hugging Face Hub: {repo_name}")
                 except Exception as e:
                     logger.error(f"Failed to push model to hub: {e}")
-                    logger.error(traceback.format_exc())
 
             if wandb_run:
-                logger.info("Finishing W&B run")
                 wandb.finish()
                 wandb_run = None
 
         if args.evaluate_on_test and test_triplets:
-            logger.info("Evaluating model on test set...")
-
             eval_model = None
             if args.do_eval_only and os.path.isdir(args.model_name):
-                logger.info(f"Loading model from {args.model_name} for test evaluation")
                 try:
                     eval_model = SentenceTransformer(args.model_name, device=device)
                 except Exception as e:
-                    logger.error(f"Error loading model for test evaluation: {e}")
-                    logger.error(traceback.format_exc())
                     eval_model = None
             elif not args.do_eval_only:
                 best_model_path = model_save_path
                 if os.path.exists(best_model_path):
-                    logger.info(f"Loading best model from {best_model_path} for test evaluation")
                     try:
                         eval_model = SentenceTransformer(best_model_path, device=device)
                     except Exception as e:
-                        logger.warning(f"Error loading best model from {best_model_path}, using final model instead: {e}")
                         eval_model = model
                 else:
-                    logger.warning(f"Best model path {best_model_path} not found, using final model.")
                     eval_model = model
             else:
-                logger.error(f"Evaluation only requested, but model_name '{args.model_name}' is not a valid directory path.")
                 eval_model = None
 
             if eval_model:
@@ -639,11 +622,12 @@ def main(args):
                                               model_save_path, 
                                               batch_size=args.eval_batch_size,
                                               k_values_accuracy=k_values_accuracy,
-                                              k_values_ndcg=k_values_ndcg)
+                                              k_values_ndcg=k_values_ndcg,
+                                              epoch=-1,
+                                              steps=-1)
 
                 if args.do_eval_only and not args.disable_wandb and not wandb_run:
                     run_name = f"Test-{args.model_name.split('/')[-1]}-{args.dataset}-{datetime.now().strftime('%Y%m%d-%H%M')}"
-                    logger.info(f"Initializing W&B for test results with run name: {run_name}")
                     try:
                         wandb_run = wandb.init(project="API-Retriever-Test", name=run_name)
                         wandb.config.update(args)
@@ -652,13 +636,10 @@ def main(args):
                         wandb_run = None
                     except Exception as e:
                         logger.error(f"Failed to initialize or log test results to W&B: {e}")
-            else:
-                logger.error("Could not load a model for test evaluation.")
 
         script_end_time = time.time()
         total_time = script_end_time - script_start_time
-        logger.info(f"Script execution completed in {total_time:.2f} seconds "
-                    f"({str(timedelta(seconds=int(total_time)))})")
+        logger.info(f"Script execution completed in {total_time:.2f} seconds ({str(timedelta(seconds=int(total_time)))})")
 
     except Exception as e:
         logger.error(f"Unhandled error during execution: {e}")
@@ -715,7 +696,7 @@ if __name__ == '__main__':
                         help="Weight decay for AdamW optimizer")
     parser.add_argument("--max_grad_norm", default=1.0, type=float,
                         help="Max gradient norm for gradient clipping")
-    parser.add_argument("--scheduler", default="warmupcosine", type=str, choices=["warmupcosine", "warmuplinear", "constantlr"],
+    parser.add_argument("--scheduler", default="warmupcosine", type=str, choices=["warmupcosine", "warmuplinear", "constantlr", "cosine"],
                         help="Learning rate scheduler")
     parser.add_argument("--checkpoint_save_total_limit", default=2, type=int,
                         help="Maximum number of checkpoints to keep (SBERT saves best based on evaluator)")
@@ -733,7 +714,6 @@ if __name__ == '__main__':
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for reproducibility")
 
-    # Add k_eval parameters
     parser.add_argument("--k_eval_values_accuracy", nargs="+", type=int, default=[1, 3, 5, 10],
                         help="Values of k for accuracy@k evaluation metrics")
     parser.add_argument("--k_eval_values_ndcg", nargs="+", type=int, default=[1, 3, 5, 10],

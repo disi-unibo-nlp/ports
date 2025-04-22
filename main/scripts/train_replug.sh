@@ -4,7 +4,6 @@ set -e
 
 # Default values (aligned with Makefile and train_ports.sh)
 DATASET_NAME="${DATASET_NAME:-toolbench}"
-DATASET_PATH="ToolRetriever/${DATASET_NAME}"
 RETRIEVAL_MODEL_NAME="${RETRIEVAL_MODEL_NAME:-BAAI/bge-base-en-v1.5}"
 INFERENCE_MODEL_PSEUDONAME="${INFERENCE_MODEL_PSEUDONAME:-llama3-8B}"
 RETRIEVAL_MAX_SEQ_LEN="${RETRIEVAL_MAX_SEQ_LEN:-512}"
@@ -20,8 +19,6 @@ SEED="${SEED:-42}"
 LOAD_IN_4BIT="${LOAD_IN_4BIT:-true}"
 MAX_TRAIN_SAMPLES="${MAX_TRAIN_SAMPLES:-1000}"
 WARMUP_RATIO="${WARMUP_RATIO:-0.1}" # Added WARMUP_RATIO
-QUERY_COLUMN="${QUERY_COLUMN:-query_for_retrieval}"
-RESPONSE_COLUMN="${RESPONSE_COLUMN:-answer}"
 WANDB_PROJECT_NAME="${WANDB_PROJECT_NAME:-REPLUG_Training}"
 WANDB_RUN_NAME="${WANDB_RUN_NAME:-REPLUG-${DATASET_NAME}-R_$(basename ${RETRIEVAL_MODEL_NAME})-I_${INFERENCE_MODEL_PSEUDONAME}-LR${LR}}"
 SAVE_PATH="${SAVE_PATH:-/home/molfetta/ports/main/output/replug/replug_retriever_${DATASET_NAME}_$(basename ${RETRIEVAL_MODEL_NAME})_$(date +%Y%m%d_%H%M%S)}" # Default SAVE_PATH if not set
@@ -66,9 +63,7 @@ python3 $PYTHON_SCRIPT \
     --retr_model_name_or_path "$RETRIEVAL_MODEL_NAME" \
     --infer_model_name_or_path "$INFERENCE_MODEL_NAME" \
     --infer_model_type "$INFERENCE_MODEL_TYPE" \
-    --dataset_path "$DATASET_PATH" \
-    --query_column "$QUERY_COLUMN" \
-    --response_column "$RESPONSE_COLUMN" \
+    --dataset "$DATASET_NAME" \
     --num_train_epochs $EPOCHS \
     --batch_size $TRAIN_BATCH_SIZE \
     --learning_rate $LR \
@@ -79,10 +74,10 @@ python3 $PYTHON_SCRIPT \
     --seed $SEED \
     --log_to_wandb \
     --wandb_proj_name "$WANDB_RUN_NAME" \
-    --trained_model_save_path "$SAVE_PATH" \ # Ensure SAVE_PATH is passed correctly
+    --trained_model_save_path "$SAVE_PATH" \
     --retr_max_seq_length $RETRIEVAL_MAX_SEQ_LEN \
     --eval_steps $EVAL_STEPS_FRACTION \
-    --warmup_ratio $WARMUP_RATIO \ # Added warmup_ratio arg
+    --warmup_ratio $WARMUP_RATIO \
     --k_eval_values_accuracy $K_EVAL_VALUES_ACCURACY \
     --k_eval_values_ndcg $K_EVAL_VALUES_NDCG \
     $QUANTIZE_ARGS \
