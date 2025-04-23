@@ -285,7 +285,7 @@ def run_evaluation(
         potential_negatives = list(corpus_set - query_positives)
         if not potential_negatives:
             continue
-        negative_api = potential_negatives[0]
+        negative_api = random.choice(potential_negatives)
         triplets.append((query, positive_api, negative_api))
 
     if not triplets:
@@ -432,7 +432,11 @@ def train(dataset: Dataset,
     train_eval_config["eval_name"] = "train_eval"
     run_evaluation(**train_eval_config)
 
-    optimizer = torch.optim.AdamW(retr_model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.AdamW(
+        retr_model.parameters(),
+        lr=learning_rate,
+        weight_decay=0.01
+    )
 
     ds_length = len(dataset["train"])
     n_iters = ds_length / train_batch_size + ds_length % train_batch_size

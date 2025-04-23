@@ -376,7 +376,8 @@ def main(args):
                                                           model_args={"trust_remote_code": True},
                                                           config_args={"trust_remote_code": True})
                 pooling_model = models.Pooling(word_embedding_model.get_word_embedding_dimension(), args.pooling)
-                model = SentenceTransformer(modules=[word_embedding_model, pooling_model], device=device)
+                normalize = models.Normalize()
+                model = SentenceTransformer(modules=[word_embedding_model, pooling_model, normalize], device=device)
 
             logger.info(f"Model loaded successfully in {time.time() - model_load_start:.2f} seconds")
             num_params = sum(p.numel() for p in model.parameters())

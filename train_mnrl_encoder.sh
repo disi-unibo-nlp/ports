@@ -9,9 +9,11 @@ docker run \
     -v "$OUTPUT_DIR":/workspace/output \
     -v "$LLM_CACHE_DIR":"$DOCKER_INTERNAL_CACHE_DIR" \
     -e HF_HOME="$DOCKER_INTERNAL_CACHE_DIR" \
+    -e WANDB_PROJECT_NAME="$WANDB_PROJECT_NAME" \
+    -e WANDB_RUN_NAME="$WANDB_RUN_NAME" \
     --memory="30g" \
     --rm \
-    --gpus '"device='"$CUDA_VISIBLE_DEVICES"'"' \
+    --gpus "device=${CUDA_VISIBLE_DEVICES}" \
     ports_image \
     mnrl \
     DATASET=toolbench \
@@ -19,7 +21,7 @@ docker run \
     BATCH_SIZE=2 \
     EVAL_BATCH_SIZE=2 \
     PREPROCESS_BATCH_SIZE=8 \
-    LR=2e-5 \
+    LR=1e-3 \
     RETRIEVAL_MAX_SEQ_LEN=512 \
     EVAL_STEPS=0.2 \
     WARMUP_RATIO=0.1 \
