@@ -509,10 +509,17 @@ def main(args):
 
         wandb_run = None
         if not args.do_eval_only and not args.disable_wandb:
-            run_name = f"SentTrans-{args.model_name.split('/')[-1]}-{args.dataset}-{datetime.now().strftime('%Y%m%d-%H%M')}"
+            # Use configurable project and run names
+            project_name = args.wandb_project_name or "API-Retriever"
+            run_name = args.wandb_run_name or f"SentTrans-{args.model_name.split('/')[-1]}-{args.dataset}-{datetime.now().strftime('%Y%m%d-%H%M')}"
+
+            logger.info(f"Initializing W&B with project: {project_name}, run name: {run_name}")
             try:
-                wandb_run = wandb.init(project="API-Retriever", name=run_name)
-                wandb.config.update(args)
+                wandb_run = wandb.init(project=project_name, name=run_name)
+                wandb.config.update(vars(args))
+                # Watch the model if a logging frequency is set
+                if getattr(args, "wandb_log_freq", 0) > 0:
+                    wandb.watch(model, log_freq=args.wandb_log_freq)
             except Exception as e:
                 logger.error(f"Failed to initialize W&B: {e}")
                 wandb_run = None
@@ -718,6 +725,14 @@ if __name__ == '__main__':
                         help="Values of k for accuracy@k evaluation metrics")
     parser.add_argument("--k_eval_values_ndcg", nargs="+", type=int, default=[1, 3, 5, 10],
                         help="Values of k for ndcg@k evaluation metrics")
+
+    # Wandb configuration parameters
+    parser.add_argument("--wandb_project_name", type=str, default=None,
+                        help="W&B project name (default: 'API-Retriever')")
+    parser.add_argument("--wandb_run_name", type=str, default=None,
+                        help="W&B run name (default: auto-generated based on model and dataset)")
+    parser.add_argument("--wandb_log_freq", type=int, default=0,
+                        help="Frequency of model logging to W&B (default: 0, disabled)")
 
     args = parser.parse_args()
 
