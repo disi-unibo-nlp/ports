@@ -33,7 +33,7 @@ docker run \
     CORPUS_UPDATES=10 \
     EPOCHS=1 \
     BATCH_SIZE=2 \
-    LR=1e-3 \
+    LR=2e-4 \
     SCHEDULER=cosine \
     SEED=42 \
     EVAL_STEPS=0.2 \

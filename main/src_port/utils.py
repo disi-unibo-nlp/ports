@@ -79,14 +79,37 @@ def get_ndcg_scores_multi(ndcg_k_values, batch_data, gold_ids_list, similarities
 
     return ndcg_scores
 
-def compute_similarity(model, 
-                       queries, 
-                       documents,
-                       device : str = "cuda"):
+# def compute_similarity(model, 
+#                        queries, 
+#                        documents,
+#                        device : str = "cuda"):
+#     """
+#     Compute the similarity between queries and documents using the input encoder model.
+#     """       
+#     # Compute embedding
+#     documents_tok = {
+#         k : documents[k].to(device) for k in documents
+#     }
+
+#     queries_tok = {
+#         k : queries[k].to(device) for k in queries
+#     }
+
+#     # CLS pooling + normalization
+#     docs_embeddings = F.normalize(model(**documents_tok)[0][:, 0], p=2, dim=-1).unsqueeze(0)
+#     q_embeddings = F.normalize(model(**queries_tok)[0][:, 0], p=2, dim=-1).unsqueeze(0)
+
+#     del documents_tok, queries_tok
+
+#     cos_sim = F.cosine_similarity(docs_embeddings, q_embeddings, dim=-1)
+
+#     return cos_sim
+
+def compute_similarity(model, queries, documents, device="cuda"):
     """
-    Compute the similarity between queries and documents using the input encoder model.
+    Compute the similarity between corresponding queries and documents in a batch.
     """       
-    # Compute embedding
+    # Move to device
     documents_tok = {
         k : documents[k].to(device) for k in documents
     }
@@ -94,15 +117,14 @@ def compute_similarity(model,
     queries_tok = {
         k : queries[k].to(device) for k in queries
     }
-
-    # CLS pooling + normalization
-    docs_embeddings = F.normalize(model(**documents_tok)[0][:, 0], p=2, dim=-1).unsqueeze(0)
-    q_embeddings = F.normalize(model(**queries_tok)[0][:, 0], p=2, dim=-1).unsqueeze(0)
-
-    del documents_tok, queries_tok
-
-    cos_sim = F.cosine_similarity(docs_embeddings, q_embeddings, dim=-1)
-
+    
+    # CLS pooling + normalization (without unsqueeze)
+    docs_embeddings = F.normalize(model(**documents_tok)[0][:, 0], p=2, dim=-1)
+    q_embeddings = F.normalize(model(**queries_tok)[0][:, 0], p=2, dim=-1)
+    
+    # Compute batch-wise cosine similarity (corresponding pairs)
+    cos_sim = torch.sum(docs_embeddings * q_embeddings, dim=1, keepdim=True)
+    
     return cos_sim
 
 
