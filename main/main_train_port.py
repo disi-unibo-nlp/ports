@@ -960,11 +960,6 @@ def train(dataset: Dataset,
                     logger.info(f"Saving checkpoint at step {global_step_counter} to {save_path}")
                     retr_model.save_pretrained(save_path)
 
-            
-            try:
-                shutil.rmtree(tmp_model_path_train)
-            except OSError as e:
-                logger.warning(f"Could not remove temporary training model directory {tmp_model_path_train}: {e}")
             torch.cuda.empty_cache()
 
             del triplet_dataloader # Free memory
