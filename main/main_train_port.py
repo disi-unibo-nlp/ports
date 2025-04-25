@@ -342,6 +342,7 @@ def run_evaluation(
             Returns ([], [], {}) if no triplets could be generated.
     """
     logger.info(f"Running evaluation: {eval_name}")
+    retr_model.eval() # Ensure the model is in evaluation mode
     # ******************** Select Dataset Split ********************
     eval_split = dataset["train"] if eval_name == "train_eval" else (dataset["test"] if "test" in dataset else dataset["validation"])
     triplets = []
@@ -354,7 +355,7 @@ def run_evaluation(
     # Step 1: Build a mapping from each query to all its known positive APIs in the corpus
     query_to_positives = {}
     for row in eval_split:
-        query = row.get("query")
+        query = row.get("query_for_retrieval")
         positive_api = row.get("api_description")
         # Ensure query and positive_api exist and the positive_api is in the evaluation corpus
         if not query or not positive_api or positive_api not in corpus_set:
@@ -367,24 +368,13 @@ def run_evaluation(
 
     # Step 2: Create triplets (query, positive, negative)
     for row in eval_split:
-        query = row.get("query")
+        query = row.get("query_for_retrieval")
         positive_api = row.get("api_description")
         # Skip if data is invalid or positive not in corpus
         if not query or not positive_api or positive_api not in corpus_set:
             continue
         
-        # Find potential negatives: all corpus APIs *except* the known positives for this query
-        query_positives = query_to_positives.get(query, set())
-        potential_negatives = list(corpus_set - query_positives)
-        
-        # If no potential negatives exist (e.g., query's positives cover the whole corpus), skip
-        if not potential_negatives:
-            logger.warning(f"Skipping triplet generation for query '{query[:50]}...' as no valid negatives found in corpus.")
-            continue
-            
-        # Randomly select one negative from the potential candidates
-        negative_api = random.choice(potential_negatives)
-        triplets.append((query, positive_api, negative_api))
+        triplets.append((query, positive_api, ""))
 
     if not triplets:
         logger.warning(f"No triplets available for evaluation ({eval_name}). Skipping evaluation.")
@@ -672,20 +662,30 @@ def train(dataset: Dataset,
         for split_idx, ds_split in enumerate(data_splits):
             logger.info(f">> Processing data split {split_idx+1}/{len(data_splits)}")
             
-            # ******************** Dataloader Setup for Current Split ********************
+            # Recompute corpus embeddings for this split to refresh negatives
+            corpus_embeddings = embed_corpus(
+                retr_model,
+                retr_tokenizer,
+                train_api_corpus,
+                retriever_max_seq_length,
+                preprocessing_batch_size,
+                device
+            )
+            
             train_data_config = {
-                "dataset" : ds_split, # Use the current data split
-                "api_corpus_list" : train_api_corpus,
-                "retr_model" : retr_model,
-                "retrieval_max_length" : retriever_max_seq_length,
-                "generateor_max_length" : inference_max_seq_length, # Renamed param? Check get_train_dataloader
-                "retrieval_tokenizer" : retr_tokenizer,
-                "inference_tokenizer" : infer_tokenizer,
-                "epoch_number" : epoch, # Pass current epoch
-                "batch_size" : train_batch_size,
-                "prompt_template" : prompt_template,
-                "num_neg_examples" : number_of_neg_examples,
-                "preprocessing_batch_size" : preprocessing_batch_size
+                "dataset": ds_split,
+                "api_corpus_list": train_api_corpus,
+                "retr_model": retr_model,
+                "retrieval_max_length": retriever_max_seq_length,
+                "generateor_max_length": inference_max_seq_length,
+                "retrieval_tokenizer": retr_tokenizer,
+                "inference_tokenizer": infer_tokenizer,
+                "epoch_number": epoch,
+                "batch_size": train_batch_size,
+                "prompt_template": prompt_template,
+                "num_neg_examples": number_of_neg_examples,
+                "preprocessing_batch_size": preprocessing_batch_size,
+                "corpus_embeddings": corpus_embeddings
             }
             triplet_dataloader = get_train_dataloader(**train_data_config)
 
@@ -1184,7 +1184,7 @@ def main():
     train_api_corpus = list(set(dataset["train"]["api_description"]))
     eval_split_name_for_corpus = "test" if "test" in dataset else "validation"
     if eval_split_name_for_corpus in dataset:
-        eval_api_corpus = list(set(dataset[eval_split_name_for_corpus]["api_description"]))
+        eval_api_corpus = list(set(dataset[eval_split_name_for_corpus]["api_description"]) | set(train_api_corpus)) # Combine with training corpus
     else:
         logger.warning(f"No 'test' or 'validation' split found for eval corpus. Using training corpus for evaluation.")
         eval_api_corpus = train_api_corpus # Fallback

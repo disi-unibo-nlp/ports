@@ -59,13 +59,27 @@ def compute_embeddings(model, documents, device="cuda"):
 
     return sentence_embeddings_normal
 
-def create_triplets_with_similar_negatives(dataset, retr_model, tokenizer, num_negatives_per_positive=1, retrieval_max_length=512, split='train', device="cuda", preprocessing_batch_size=32):
+def create_triplets_with_similar_negatives(dataset, 
+                                           retr_model, 
+                                           tokenizer, 
+                                           num_negatives_per_positive=1, 
+                                           retrieval_max_length=512, 
+                                           split='train', 
+                                           device="cuda", 
+                                           preprocessing_batch_size=32):
     triplets = []
     questions = dataset[split]["query_for_retrieval"]
     augmented_descriptions = dataset[split]["api_description"]
     answers = dataset[split]["answer"]
 
-    batch_size=preprocessing_batch_size
+    # Build mapping from queries to all indices of their positive API descriptions
+    query_to_positive_indices = {}
+    for i, query in enumerate(questions):
+        if query not in query_to_positive_indices:
+            query_to_positive_indices[query] = []
+        query_to_positive_indices[query].append(i)
+
+    batch_size = preprocessing_batch_size
 
     doc_embeddings = embed_corpus(retr_model, 
                                 tokenizer,
@@ -91,19 +105,24 @@ def create_triplets_with_similar_negatives(dataset, retr_model, tokenizer, num_n
             idx = i + j
             query = questions[idx]
             positive = augmented_descriptions[idx]
-
-            # Get top k+1 similar indices
-            top_k = num_negatives_per_positive + 1
-            similar_indices = similarity.argsort(descending=True)[:top_k].tolist()
-
-            # Check if positive is in top k and handle accordingly
-            if idx in similar_indices:
-                similar_indices.remove(idx)
-                negative_indices = similar_indices#[:num_negatives_per_positive]
-            else:
-                negative_indices = similar_indices[:num_negatives_per_positive]#[idx for idx in similar_indices[:top_k] if idx != idx]
-
-            assert len(negative_indices) == num_negatives_per_positive
+            
+            # Get indices of all positives for this query
+            positive_indices = set(query_to_positive_indices[query])
+            
+            # Sort indices by similarity (descending)
+            similar_indices = similarity.argsort(descending=True).tolist()
+            
+            # Filter out all positive indices
+            negative_indices = []
+            for sim_idx in similar_indices:
+                if sim_idx not in positive_indices:
+                    negative_indices.append(sim_idx)
+                    if len(negative_indices) == num_negatives_per_positive:
+                        break
+            
+            # Check if we found enough negatives
+            if len(negative_indices) < num_negatives_per_positive:
+                print(f"Warning: Could not find {num_negatives_per_positive} negatives for query '{query}'. Found {len(negative_indices)}.")
 
             triplets.append({
                 'query': query,
@@ -112,6 +131,7 @@ def create_triplets_with_similar_negatives(dataset, retr_model, tokenizer, num_n
                 'pos_answer': answers[idx],
                 'neg_answer': [answers[idx] for idx in negative_indices]
             })
+            
         del query_embeddings
         torch.cuda.empty_cache()
 
@@ -119,6 +139,76 @@ def create_triplets_with_similar_negatives(dataset, retr_model, tokenizer, num_n
     torch.cuda.empty_cache()
 
     return triplets
+
+# def create_triplets_with_similar_negatives(dataset, 
+#                                            retr_model, 
+#                                            tokenizer, 
+#                                            num_negatives_per_positive=1, 
+#                                            retrieval_max_length=512, 
+#                                            split='train', 
+#                                            device="cuda", 
+#                                            preprocessing_batch_size=32):
+#     triplets = []
+#     questions = dataset[split]["query_for_retrieval"]
+#     augmented_descriptions = dataset[split]["api_description"]
+#     answers = dataset[split]["answer"]
+
+#     batch_size=preprocessing_batch_size
+
+#     doc_embeddings = embed_corpus(retr_model, 
+#                                 tokenizer,
+#                                 augmented_descriptions, 
+#                                 device, 
+#                                 batch_size=batch_size, 
+#                                 max_length=retrieval_max_length)
+#     doc_embeddings = doc_embeddings.to(device)
+
+#     # Process queries in batches
+#     for i in tqdm(range(0, len(questions), batch_size), desc="Processing queries"):
+#         batch_questions = questions[i:i+batch_size]
+        
+#         # Compute query embeddings for the batch
+#         query_encodings = tokenizer(batch_questions, truncation=True, max_length=retrieval_max_length, padding='max_length', return_tensors='pt')
+#         query_embeddings = compute_embeddings(retr_model, query_encodings, device)
+#         query_embeddings = query_embeddings.to(device)
+
+#         # Compute similarities for the batch
+#         similarities = F.cosine_similarity(query_embeddings.unsqueeze(1), doc_embeddings.unsqueeze(0), dim=2)
+
+#         for j, similarity in enumerate(similarities):
+#             idx = i + j
+#             query = questions[idx]
+#             positive = augmented_descriptions[idx]
+
+#             # Get top k+1 similar indices
+#             top_k = num_negatives_per_positive + 1
+#             similar_indices = similarity.argsort(descending=True).tolist() #[:top_k].tolist()
+
+#             # Check if positive is in top k and handle accordingly
+#             if idx in similar_indices:
+#                 similar_indices.remove(idx)
+#                 negative_indices = similar_indices#[:num_negatives_per_positive]
+#             else:
+#                 negative_indices = similar_indices#[:num_negatives_per_positive]#[idx for idx in similar_indices[:top_k] if idx != idx]
+
+#             negative_indices = negative_indices[:num_negatives_per_positive]
+
+#             assert len(negative_indices) == num_negatives_per_positive
+
+#             triplets.append({
+#                 'query': query,
+#                 'positive': positive,
+#                 'negative': [augmented_descriptions[idx] for idx in negative_indices],
+#                 'pos_answer': answers[idx],
+#                 'neg_answer': [answers[idx] for idx in negative_indices]
+#             })
+#         del query_embeddings
+#         torch.cuda.empty_cache()
+
+#     del similarities, doc_embeddings
+#     torch.cuda.empty_cache()
+
+#     return triplets
 
 # def create_triplets_with_similar_negatives(dataset, 
 #                                           retr_model, 

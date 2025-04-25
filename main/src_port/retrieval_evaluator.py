@@ -337,7 +337,7 @@ class DeviceAwareInformationRetrievalEvaluator(SentenceEvaluator):
                         pair_scores = torch.zeros(len(query_embeddings), len(sub_corpus_embeddings), device=device)
                         
                         # Process in smaller batches to avoid memory issues
-                        batch_size = 128  # Adjust based on available memory
+                        batch_size = self.batch_size
                         for i in range(0, len(query_embeddings), batch_size):
                             end_idx = min(i + batch_size, len(query_embeddings))
                             q_batch = query_embeddings[i:end_idx]
