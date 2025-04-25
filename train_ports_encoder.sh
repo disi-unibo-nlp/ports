@@ -30,7 +30,7 @@ docker run \
     BETA=0.5 \
     GAMMA=0.5 \
     PREF_BETA=1 \
-    CORPUS_UPDATES=50 \
+    CORPUS_UPDATES=20 \
     EPOCHS=1 \
     BATCH_SIZE=4 \
     LR=2e-5 \

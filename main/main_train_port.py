@@ -432,8 +432,8 @@ def run_evaluation(
     logger.info(f"Computing corpus embeddings for '{eval_name}'")
     corpus_embeddings = embed_corpus(
         retr_model=st_retr_model,
-        tokenizer=retr_tokenizer,
-        api_corpus=eval_api_corpus,
+        retr_tokenizer=retr_tokenizer,
+        corpus=eval_api_corpus,
         max_length=retriever_max_seq_length,
         batch_size=eval_batch_size,
         device=device
@@ -960,8 +960,6 @@ def train(dataset: Dataset,
                     logger.info(f"Saving checkpoint at step {global_step_counter} to {save_path}")
                     retr_model.save_pretrained(save_path)
 
-            # --- Cleanup SentenceTransformer wrapper and temp files ---
-            del st_retr_model_train, transformer_layer, pooling_layer, normalize_layer
             
             try:
                 shutil.rmtree(tmp_model_path_train)
