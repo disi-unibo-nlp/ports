@@ -617,7 +617,7 @@ def get_train_dataloader(dataset,
 
     triplet_dataloader = DataLoader(triplet_dataset,
                                 batch_size=batch_size,
-                                shuffle=False,#True,
+                                shuffle=True,
                                 collate_fn=train_collator,
                                 drop_last=False)
                                     

@@ -5,6 +5,7 @@ import argparse
 import random
 import json
 import numpy as np
+import shutil
 
 from typing import List
 from transformers.data.data_collator import DataCollatorMixin
@@ -344,7 +345,14 @@ def run_evaluation(
     logger.info(f"Running evaluation: {eval_name}")
     retr_model.eval() # Ensure the model is in evaluation mode
     # ******************** Select Dataset Split ********************
-    eval_split = dataset["train"] if eval_name == "train_eval" else (dataset["test"] if "test" in dataset else dataset["validation"])
+    
+    eval_split = (
+        dataset["train"]
+        if eval_name == "train_eval"
+        else (dataset["test"] if "test" in dataset else dataset["validation"])
+    )
+
+
     triplets = []
     corpus_set = set(eval_api_corpus) # Use a set for efficient lookup
 
@@ -374,11 +382,19 @@ def run_evaluation(
         if not query or not positive_api or positive_api not in corpus_set:
             continue
         
-        triplets.append((query, positive_api, ""))
+        triplets.append((query, positive_api, "")) # Negative is empty for evaluation triplets
 
     if not triplets:
         logger.warning(f"No triplets available for evaluation ({eval_name}). Skipping evaluation.")
         return [], [], {}
+    
+    # Print a few example triplets
+    logger.info(f"Generated {len(triplets)} triplets for evaluation '{eval_name}'. Examples:")
+    for i, (q, p, n) in enumerate(triplets[:3]): # Print the first 3 triplets
+        logger.info(f"  Triplet {i+1}:")
+        logger.info(f"    Query: {q[:100]}...") # Print first 100 chars
+        logger.info(f"    Positive: {p[:100]}...") # Print first 100 chars
+        # logger.info(f"    Negative: {n[:100]}...") # Negative is empty here
 
     # ******************** Prepare SentenceTransformer Wrapper ********************
     # The evaluator expects a SentenceTransformer model. We wrap the HF model temporarily.
@@ -401,6 +417,7 @@ def run_evaluation(
     st_retr_model = SentenceTransformer(modules=[transformer, pooling, normalize], device=device)
 
     # ******************** Create Evaluator Instance ********************
+    logger.info(f"Creating evaluator instance for '{eval_name}' using the generated triplets.") # Added log before evaluator creation
     evaluator = create_api_evaluator(
         triplets,
         eval_api_corpus,
@@ -410,9 +427,21 @@ def run_evaluation(
         k_values_ndcg=k_eval_values_ndcg
     )
 
+    # ******************** Compute Corpus Embeddings ********************
+    # create a tensor for the corpus embeddings
+    logger.info(f"Computing corpus embeddings for '{eval_name}'")
+    corpus_embeddings = embed_corpus(
+        retr_model=st_retr_model,
+        tokenizer=retr_tokenizer,
+        api_corpus=eval_api_corpus,
+        max_length=retriever_max_seq_length,
+        batch_size=eval_batch_size,
+        device=device
+    )
+
     # ******************** Compute and Log Scores ********************
     logger.info(f"Computing evaluation scores for '{eval_name}'")
-    scores = evaluator(st_retr_model) # Run the evaluation
+    scores = evaluator(st_retr_model, corpus_embeddings=corpus_embeddings) # Run the evaluation
     
     # Log score structure once for clarity
     if hasattr(run_evaluation, 'first_run') == False:
@@ -422,25 +451,22 @@ def run_evaluation(
     log_to_wandb(scores, epoch=epoch, steps=steps, prefix=eval_name) # Log to W&B
 
     # ******************** Extract Key Metrics ********************
-    ranks = []
-    ndcg_scores_list = []
-    # Extract Accuracy@k scores
-    acc_k_scores = scores.get('cosine', {}).get('accuracy@k', {})
-    for k in k_eval_values_accuracy:
-        ranks.append(acc_k_scores.get(k, 0.0) * 100) # Convert to percentage
-
-    # Extract NDCG@k scores
-    ndcg_k_scores = scores.get('cosine', {}).get('ndcg@k', {})
-    for k in k_eval_values_ndcg:
-        ndcg_scores_list.append(ndcg_k_scores.get(k, 0.0))
+     # pull out the flat keys directly:
+    ranks = [
+        scores.get(f"cosine_accuracy@{k}", 0.0) * 100
+        for k in k_eval_values_accuracy
+    ]
+    ndcg_scores_list = [
+        scores.get(f"cosine_ndcg@{k}", 0.0)
+        for k in k_eval_values_ndcg
+    ]
 
     # ******************** Cleanup ********************
     retr_model.train() # Set model back to train mode if it was changed by evaluator
     torch.cuda.empty_cache() # Clear GPU cache
 
     # Clean up temporary model files (optional, consider adding error handling)
-    # import shutil
-    # shutil.rmtree(tmp_model_path)
+    shutil.rmtree(tmp_model_path)
 
     return ranks, ndcg_scores_list, scores
 
@@ -592,8 +618,8 @@ def train(dataset: Dataset,
     # --- Evaluation on Training Set ---
     logger.info(f"Starting Initial Evaluation (Train)")
     train_eval_config = eval_config.copy()
-    train_eval_config["eval_api_corpus"] = train_api_corpus # Use training corpus
-    train_eval_config["eval_name"] = "train_eval" # Set different name
+    train_eval_config["eval_api_corpus"] = train_api_corpus
+    train_eval_config["eval_name"] = "train_eval"
     run_evaluation(**train_eval_config)
 
     # ******************** Optimizer and Scheduler Setup ********************
@@ -662,20 +688,10 @@ def train(dataset: Dataset,
         for split_idx, ds_split in enumerate(data_splits):
             logger.info(f">> Processing data split {split_idx+1}/{len(data_splits)}")
             
-            # Recompute corpus embeddings for this split to refresh negatives
-            corpus_embeddings = embed_corpus(
-                retr_model,
-                retr_tokenizer,
-                train_api_corpus,
-                retriever_max_seq_length,
-                preprocessing_batch_size,
-                device
-            )
-            
             train_data_config = {
                 "dataset": ds_split,
                 "api_corpus_list": train_api_corpus,
-                "retr_model": retr_model,
+                "retr_model": retr_model, # Pass the original HF model to dataloader if needed elsewhere
                 "retrieval_max_length": retriever_max_seq_length,
                 "generateor_max_length": inference_max_seq_length,
                 "retrieval_tokenizer": retr_tokenizer,
@@ -684,8 +700,7 @@ def train(dataset: Dataset,
                 "batch_size": train_batch_size,
                 "prompt_template": prompt_template,
                 "num_neg_examples": number_of_neg_examples,
-                "preprocessing_batch_size": preprocessing_batch_size,
-                "corpus_embeddings": corpus_embeddings
+                "preprocessing_batch_size": preprocessing_batch_size
             }
             triplet_dataloader = get_train_dataloader(**train_data_config)
 
@@ -945,6 +960,15 @@ def train(dataset: Dataset,
                     logger.info(f"Saving checkpoint at step {global_step_counter} to {save_path}")
                     retr_model.save_pretrained(save_path)
 
+            # --- Cleanup SentenceTransformer wrapper and temp files ---
+            del st_retr_model_train, transformer_layer, pooling_layer, normalize_layer
+            
+            try:
+                shutil.rmtree(tmp_model_path_train)
+            except OSError as e:
+                logger.warning(f"Could not remove temporary training model directory {tmp_model_path_train}: {e}")
+            torch.cuda.empty_cache()
+
             del triplet_dataloader # Free memory
             torch.cuda.empty_cache()
 
@@ -960,7 +984,7 @@ def train(dataset: Dataset,
                 ckpt_to_remove = saved_checkpoints.pop(0) # Remove the oldest checkpoint path
                 if os.path.exists(ckpt_to_remove):
                     logger.info(f"Max checkpoints ({max_checkpoints}) reached. Removing oldest epoch checkpoint: {ckpt_to_remove}")
-                    import shutil
+                    
                     try:
                         shutil.rmtree(ckpt_to_remove)
                     except OSError as e:

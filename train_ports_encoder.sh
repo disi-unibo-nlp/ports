@@ -26,13 +26,13 @@ docker run \
     LAMBDA_WEIGHT=0.1 \
     WANDB_PROJECT_NAME=PORTS_AAAI-EMNLP \
     WANDB_RUN_NAME=PORTS_toolbench_g3 \
-    LOG_FREQ=20 \
+    LOG_FREQ=10 \
     BETA=0.5 \
     GAMMA=0.5 \
     PREF_BETA=1 \
-    CORPUS_UPDATES=0 \
+    CORPUS_UPDATES=50 \
     EPOCHS=1 \
-    BATCH_SIZE=8 \
+    BATCH_SIZE=4 \
     LR=2e-5 \
     SCHEDULER=cosine \
     SEED=42 \
@@ -43,4 +43,4 @@ docker run \
     SAVE_DIR=/workspace/output \
     K_EVAL_VALUES_ACCURACY="1 3 5 10 20" \
     K_EVAL_VALUES_NDCG="1 3 5 10 20" \
-    MAX_TRAIN_SAMPLES=10000
+    MAX_TRAIN_SAMPLES=5000
