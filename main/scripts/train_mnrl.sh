@@ -23,6 +23,8 @@ K_EVAL_VALUES_NDCG="${K_EVAL_VALUES_NDCG:-1 3 5 10}"
 
 WANDB_PROJECT_NAME="${WANDB_PROJECT_NAME:-MNRL_Training}"
 WANDB_RUN_NAME="${WANDB_RUN_NAME:-MNRL-${DATASET_NAME}-$(basename ${MODEL_NAME})-LR${LR}-E${EPOCHS}}"
+LOG_FREQ=${LOG_FREQ:-50}
+
 OUTPUT_DIR="${OUTPUT_DIR:-/home/molfetta/ports/main/output/mnrl/mnrl_retriever_${DATASET_NAME}_$(basename ${MODEL_NAME})_$(date +%Y%m%d_%H%M%S)}"
 
 # Ensure the output directory exists
@@ -55,4 +57,7 @@ python3 $PYTHON_SCRIPT \
     --hub_repo_name "mnrl-${DATASET_NAME}-$(basename ${MODEL_NAME})" \
     --log_file "$OUTPUT_DIR/training.log" \
     --seed $SEED \
+    --wandb_project_name $WANDB_PROJECT_NAME \
+    --wandb_run_name $WANDB_RUN_NAME \
+    --wandb_log_freq $LOG_FREQ \
     --max_train_samples $MAX_TRAIN_SAMPLES

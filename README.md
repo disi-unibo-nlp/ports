@@ -26,6 +26,7 @@ This repository contains the code and datasets for reproducing the experiments d
 - [Quickstart](#quickstart)
 - [Using the Markdown File](#using-the-markdown-file)
 - [Script-based Training](#script-based-training)
+- [Sbatch-based Grid Search Training](#sbatch-based-grid-search-training)
 - [Main Accuracy Results](#main-accuracy-results)
 
 ## Model
@@ -354,11 +355,122 @@ DATASET_NAME=bfcl MODEL_NAME=FacebookAI/roberta-base bash main/scripts/train_mnr
 | `SCHEDULER` | Learning rate scheduler | warmupcosine |
 | `RANDOM_NEGATIVES` | Whether to use random negatives | true |
 
-### Notes
+## Sbatch-based Grid Search Training
 
-- All scripts can be called directly or via the Makefile (see above).
-- To change any parameter, set the corresponding environment variable before the script call.
-- Output directories are automatically created based on the dataset, model, and timestamp.
+For large-scale training and hyperparameter tuning, we provide a sbatch-based solution that enables running multiple training configurations in parallel on SLURM-based clusters. This approach is especially useful for grid searches across multiple hyperparameters.
+
+### Using run_sbatch.sh
+
+The `run_sbatch.sh` script provides a flexible way to launch multiple training jobs with different parameter combinations using SLURM's sbatch utility.
+
+```bash
+./run_sbatch.sh --script=<script_type> [options]
+```
+
+#### Required Parameters:
+- `--script=<script_type>`: Specifies which training script to use. Options: `mnrl`, `ports`, or `replug`.
+
+#### Optional Parameters (all accept comma-separated arrays):
+- `--machine=<machine_name>`: Target compute node(s) (e.g., "deeplearn2,faretra"). If omitted, jobs run on any available machine.
+- `--gpu_type=<gpu_type>`: GPU type to request (default: "nvidia_geforce_rtx_3090")
+- `--gpu_count=<count>`: Number of GPUs per job (default: 1)
+- `--lr=<learning_rates>`: Learning rate values (e.g., "1e-5,1e-4,1e-3")
+- `--batch_size=<sizes>`: Batch size values (e.g., "2,4,8")
+- `--epochs=<counts>`: Number of epochs (e.g., "1,3,5")
+- `--dataset=<names>`: Dataset names (e.g., "toolbench,apibench")
+- `--wandb_run_name=<name>`: Base name for W&B runs (will be expanded with parameters)
+- `--params="<extra_params>"`: Additional parameters to pass to the training script
+
+#### Using Additional Parameters
+
+The `--params` flag allows you to pass any additional parameters not covered by the standard options. These parameters are passed directly to the underlying training script. Important notes:
+
+1. Enclose all additional parameters in quotes
+2. Use proper parameter format for the target script (usually `--param_name=value`)
+3. Separate multiple parameters with spaces
+4. The entire string is passed as-is to each job in the grid search
+
+**Examples of additional parameters:**
+
+```bash
+# Single additional parameter
+--params="--gamma=0.3"
+
+# Multiple additional parameters
+--params="--gamma=0.3 --beta=0.7 --pooling=cls"
+
+# Complex parameters with quotes (use escaped quotes)
+--params="--wandb_project_name=\"My Project\" --k_eval_values_accuracy=\"1 3 5 10\""
+```
+
+### Example Usage
+
+#### Basic Usage:
+```bash
+./run_sbatch.sh --script=ports --machine=deeplearn2 --lr=1e-5 --batch_size=2 --epochs=1
+```
+
+#### Grid Search Over Multiple Parameters:
+```bash
+./run_sbatch.sh --script=replug --lr=1e-5,1e-4,1e-3 --batch_size=2,4 --epochs=1,3 \
+  --dataset=toolbench --wandb_run_name=replug_grid_search
+```
+
+This will launch 12 jobs (3 learning rates × 2 batch sizes × 2 epoch counts) with all combinations.
+
+#### Multi-Machine Distributed Search:
+```bash
+./run_sbatch.sh --script=mnrl --machine=deeplearn2,faretra --lr=1e-5,1e-4 \
+  --batch_size=2,4 --dataset=apibench,toolbench
+```
+
+This will distribute 8 jobs across the specified machines.
+
+#### Advanced Usage with Custom Parameters:
+```bash
+# Adding additional model-specific parameters
+./run_sbatch.sh --script=ports --lr=1e-5 --batch_size=2 \
+  --params="--gamma=0.3 --beta=0.7 --preprocess_batch_size=32 --eval_steps=0.1"
+
+# Using different evaluation metrics
+./run_sbatch.sh --script=mnrl --dataset=toolbench \
+  --params="--k_eval_values_accuracy=\"1 3 5 10\" --k_eval_values_ndcg=\"1 3 5 10\""
+
+# Setting model-specific parameters with different learning rates
+./run_sbatch.sh --script=replug --lr=1e-5,1e-4 \
+  --params="--num_retrieved_docs=5 --corpus_updates=10 --use_4bit=false"
+```
+
+### Common Additional Parameters
+
+Here are some useful additional parameters by script type:
+
+**PORTS:**
+- `--lambda_weight=<float>`: Weight for the lambda loss component
+- `--pref_beta=<float>`: Preference weight in ORPO
+- `--n_negs=<int>`: Number of negative samples
+- `--corpus_updates=<int>`: Steps between corpus re-embedding
+
+**RePlug:**
+- `--num_retrieved_docs=<int>`: Number of documents to retrieve
+- `--use_4bit=<bool>`: Whether to use 4-bit quantization
+
+**MNRL:**
+- `--pooling=<str>`: Embedding pooling strategy (cls, mean)
+- `--negatives_per_sample=<int>`: Number of negatives per sample
+- `--log_freq=<int>`: Logging frequency
+
+### Under the Hood
+
+The script will:
+1. Parse all command-line arguments and convert comma-separated values into arrays
+2. Determine the correct training script based on the `--script` parameter
+3. Generate all possible combinations of the provided parameter arrays
+4. Submit individual sbatch jobs for each combination
+5. Generate unique job names and W&B run names for easy tracking
+6. Display a summary of all submitted jobs
+
+This approach enables efficient hyperparameter tuning and experimentation across multiple compute resources.
 
 ## Main Accuracy Results
 
