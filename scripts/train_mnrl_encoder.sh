@@ -25,6 +25,7 @@ K_EVAL_VALUES_ACCURACY="1 3 5 10"
 K_EVAL_VALUES_NDCG="1 3 5 10"
 EPOCHS=1
 SAVE_CHECKPOINTS=false
+INFERENCE_MODEL="llama3-8B"  # Added but will be ignored
 
 # Parse command-line arguments
 while [[ $# -gt 0 ]]; do
@@ -51,10 +52,13 @@ while [[ $# -gt 0 ]]; do
     --epochs=*) EPOCHS="${1#*=}" ;;
     --output_dir=*) OUTPUT_DIR="${1#*=}" ;;
     --save_checkpoints=*) SAVE_CHECKPOINTS="${1#*=}" ;;
+    --inference_model=*) INFERENCE_MODEL="${1#*=}" ;;  # Accept but ignore this parameter
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
   shift
 done
+
+# Note: INFERENCE_MODEL is accepted in the arguments above but not passed to the Python script below
 
 docker run \
     -v "$OUTPUT_DIR":/workspace/output \
