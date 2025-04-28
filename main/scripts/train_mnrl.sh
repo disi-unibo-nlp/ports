@@ -27,6 +27,9 @@ LOG_FREQ=${LOG_FREQ:-50}
 
 OUTPUT_DIR="${OUTPUT_DIR:-/home/molfetta/ports/main/output/mnrl/mnrl_retriever_${DATASET_NAME}_$(basename ${MODEL_NAME})_$(date +%Y%m%d_%H%M%S)}"
 
+# Add save_checkpoints parameter
+SAVE_CHECKPOINTS="${SAVE_CHECKPOINTS:-false}"
+
 # Ensure the output directory exists
 mkdir -p "$OUTPUT_DIR"
 
@@ -60,4 +63,5 @@ python3 $PYTHON_SCRIPT \
     --wandb_project_name $WANDB_PROJECT_NAME \
     --wandb_run_name $WANDB_RUN_NAME \
     --wandb_log_freq $LOG_FREQ \
+    $([ "$SAVE_CHECKPOINTS" = "true" ] && echo "--save_checkpoints") \
     --max_train_samples $MAX_TRAIN_SAMPLES

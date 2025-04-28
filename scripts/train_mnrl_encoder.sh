@@ -24,6 +24,7 @@ LOG_FREQ=50
 K_EVAL_VALUES_ACCURACY="1 3 5 10"
 K_EVAL_VALUES_NDCG="1 3 5 10"
 EPOCHS=1
+SAVE_CHECKPOINTS=false
 
 # Parse command-line arguments
 while [[ $# -gt 0 ]]; do
@@ -49,6 +50,7 @@ while [[ $# -gt 0 ]]; do
     --k_eval_values_ndcg=*) K_EVAL_VALUES_NDCG="${1#*=}" ;;
     --epochs=*) EPOCHS="${1#*=}" ;;
     --output_dir=*) OUTPUT_DIR="${1#*=}" ;;
+    --save_checkpoints=*) SAVE_CHECKPOINTS="${1#*=}" ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
   shift
@@ -83,4 +85,5 @@ docker run \
     LOG_FREQ=$LOG_FREQ \
     K_EVAL_VALUES_ACCURACY="$K_EVAL_VALUES_ACCURACY" \
     K_EVAL_VALUES_NDCG="$K_EVAL_VALUES_NDCG" \
-    EPOCHS=$EPOCHS
+    EPOCHS=$EPOCHS \
+    SAVE_CHECKPOINTS=$SAVE_CHECKPOINTS

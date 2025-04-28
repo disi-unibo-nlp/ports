@@ -438,6 +438,11 @@ This will create 4 jobs testing all combinations of retrieval and inference mode
   --params="--num_retrieved_docs=5 --corpus_updates=10 --use_4bit=false"
 ```
 
+Run over all datasets
+```bash
+./run_sbatch.sh --script=mnrl --lr=2e-5 --retrieval_model=BAAI/bge-base-en-v1.5,FacebookAI/roberta-base --batch_size=2 --epochs=1 --wandb_project_name=PORTS_EMNLP --dataset=bfcl,apibank,apibench,octopus,toole,toolbench,toole-overlap,octopus-overlap
+```
+
 ### Common Additional Parameters
 
 Here are some useful additional parameters by script type:

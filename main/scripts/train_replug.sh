@@ -28,6 +28,9 @@ K_EVAL_VALUES_NDCG="${K_EVAL_VALUES_NDCG:-1 3 5}"
 CORPUS_UPDATES="${CORPUS_UPDATES:-5}"
 PREPROCESS_BATCH_SIZE="${PREPROCESS_BATCH_SIZE:-16}"
 
+# Add save_checkpoints parameter
+SAVE_CHECKPOINTS="${SAVE_CHECKPOINTS:-false}"
+
 # Map pseudo-name to actual model path/ID and type
 case $INFERENCE_MODEL_PSEUDONAME in
   "llama3-8B")
@@ -85,6 +88,7 @@ python3 $PYTHON_SCRIPT \
     --k_eval_values_ndcg $K_EVAL_VALUES_NDCG \
     --corpus_updates $CORPUS_UPDATES \
     --preprocess_batch_size $PREPROCESS_BATCH_SIZE \
+    $([ "$SAVE_CHECKPOINTS" = "true" ] && echo "--save_checkpoints") \
     $QUANTIZE_ARGS \
     --max_train_samples $MAX_TRAIN_SAMPLES
 

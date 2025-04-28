@@ -35,6 +35,7 @@ SAVE_DIR="${SAVE_DIR:-/home/molfetta/ports/main/output/ports/ports_retriever_$(d
 MAX_CHECKPOINTS="${MAX_CHECKPOINTS:-}"
 K_EVAL_VALUES_ACCURACY="${K_EVAL_VALUES_ACCURACY:-1 3 5}"
 K_EVAL_VALUES_NDCG="${K_EVAL_VALUES_NDCG:-1 3 5}"
+SAVE_CHECKPOINTS="${SAVE_CHECKPOINTS:-false}"
 
 WANDB_RUN_NAME="${WANDB_RUN_NAME:-${DATASET_NAME}-${RETRIEVAL_MODEL_NAME}-${INFERENCE_MODEL_PSEUDONAME}-B${BETA}-G${GAMMA}-ORPOB${PREF_BETA}-LR${LR}}"
 
@@ -84,6 +85,7 @@ python3 $PYTHON_SCRIPT \
     --save_dir "$SAVE_DIR" \
     $SAVE_ARGS \
     $MAX_CHECKPOINTS_ARGS \
+    $([ "$SAVE_CHECKPOINTS" = "true" ] && echo "--save_checkpoints") \
     --k_eval_values_accuracy $K_EVAL_VALUES_ACCURACY \
     --k_eval_values_ndcg $K_EVAL_VALUES_NDCG \
     --load_in_4bit \

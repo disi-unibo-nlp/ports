@@ -511,7 +511,8 @@ def train(dataset: Dataset,
            save_steps: int = None,
            save_dir: str = "./checkpoints",
            max_checkpoints: int = None,
-           weight_decay: float = 0.01):
+           weight_decay: float = 0.01,
+           save_checkpoints: bool = False):
     """
     Main training loop for the PORT model.
 
@@ -560,6 +561,7 @@ def train(dataset: Dataset,
         save_dir (str, optional): Directory to save model checkpoints. Defaults to "./checkpoints".
         max_checkpoints (int, optional): Maximum number of checkpoints to keep. Older/worse ones might be deleted. Defaults to None (keep all).
         weight_decay (float, optional): Weight decay for the AdamW optimizer. Defaults to 0.01.
+        save_checkpoints (bool, optional): Whether to save model checkpoints during training. Defaults to False.
     """
     # ******************** W&B Initialization & Config Logging ********************
     config = {
@@ -584,6 +586,7 @@ def train(dataset: Dataset,
         "save_steps": save_steps,
         "eval_strategy": eval_strategy,
         "eval_steps": eval_steps,
+        "save_checkpoints": save_checkpoints
     }
 
     run_name = wandb_run_name or f"PORTS-{dataset_name}-{num_epochs}ep"
@@ -955,7 +958,7 @@ def train(dataset: Dataset,
                     retr_model.train() # Ensure model is back in train mode after eval
 
                 # ******************** Step-based Checkpoint Saving ********************
-                if save_strategy == "steps" and save_steps and global_step_counter % save_steps == 0:
+                if save_strategy == "steps" and save_steps and global_step_counter % save_steps == 0 and save_checkpoints:
                     save_path = os.path.join(save_dir, f"checkpoint-step-{global_step_counter}")
                     logger.info(f"Saving checkpoint at step {global_step_counter} to {save_path}")
                     retr_model.save_pretrained(save_path)
@@ -966,7 +969,7 @@ def train(dataset: Dataset,
             torch.cuda.empty_cache()
 
         # ******************** Epoch-based Checkpoint Saving ********************
-        if save_strategy == "epoch":
+        if save_strategy == "epoch" and save_checkpoints:
             ckpt_name = f"checkpoint-epoch-{epoch+1}"
             save_path = os.path.join(save_dir, ckpt_name)
             logger.info(f"Saving checkpoint at end of epoch {epoch+1} to {save_path}")
@@ -1060,6 +1063,7 @@ def main():
     parser.add_argument('--save_steps', type=int, default=None, help="If save_strategy='steps', save a checkpoint every N steps.")
     parser.add_argument('--save_dir', type=str, default="./checkpoints", help="Directory to save model checkpoints.")
     parser.add_argument('--max_checkpoints', type=int, default=None, help="Maximum number of checkpoints to keep (based on strategy, e.g., removes oldest). Default: keep all.")
+    parser.add_argument('--save_checkpoints', action='store_true', default=False, help="Whether to save model checkpoints during training.")
 
     # --- Optimizer & Scheduler Args ---
     parser.add_argument('--lr', type=float, default=1e-4, help="Learning rate for the AdamW optimizer.")
@@ -1264,7 +1268,8 @@ def main():
         "save_strategy": args.save_strategy,
         "save_steps": args.save_steps,
         "save_dir": args.save_dir,
-        "max_checkpoints": args.max_checkpoints
+        "max_checkpoints": args.max_checkpoints,
+        "save_checkpoints": args.save_checkpoints
     }
 
     logger.info("Starting Training and Evaluation Process...")

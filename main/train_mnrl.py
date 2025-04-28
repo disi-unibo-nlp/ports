@@ -565,6 +565,15 @@ def main(args):
 
             callback_func = wandb_callback if wandb_run and ir_evaluator else None
 
+            checkpoint_params = {}
+            if args.save_checkpoints:
+                checkpoint_params = {
+                    "checkpoint_path": model_save_path,
+                    "checkpoint_save_total_limit": args.checkpoint_save_total_limit,
+                    "checkpoint_save_steps": evaluation_step_interval,
+                    "save_best_model": True if ir_evaluator else False
+                }
+
             model.fit(
                 train_objectives=[(train_dataloader, train_loss)],
                 epochs=num_epochs,
@@ -573,22 +582,21 @@ def main(args):
                 evaluation_steps=evaluation_step_interval,
                 callback=callback_func,
                 use_amp=True,
-                checkpoint_path=model_save_path,
-                checkpoint_save_total_limit=args.checkpoint_save_total_limit,
-                checkpoint_save_steps=evaluation_step_interval,
                 optimizer_params={"lr": args.lr},
                 scheduler=args.scheduler,
-                save_best_model=True if ir_evaluator else False,
                 max_grad_norm=args.max_grad_norm,
-                weight_decay=args.weight_decay
+                weight_decay=args.weight_decay,
+                **checkpoint_params
             )
 
             train_end = time.time()
             train_duration = train_end - train_start
             logger.info(f"Training completed in {train_duration:.2f}s ({str(timedelta(seconds=int(train_duration)))})")
 
-            final_model_path = os.path.join(model_save_path, "final")
-            model.save(final_model_path)
+            if args.save_checkpoints:
+                final_model_path = os.path.join(model_save_path, "final")
+                model.save(final_model_path)
+                logger.info(f"Saved final model to {final_model_path}")
 
             if args.push_to_hub and os.environ.get('HF_TOKEN'):
                 repo_name = args.hub_repo_name or f"api-retriever-{args.model_name.split('/')[-1]}-{args.dataset}"
@@ -717,6 +725,8 @@ if __name__ == '__main__':
                         help="Repository name for Hugging Face Hub (optional)")
     parser.add_argument("--public_model", action="store_true",
                         help="Make the pushed model publicly available")
+    parser.add_argument("--save_checkpoints", action="store_true", default=False,
+                        help="Whether to save model checkpoints during training")
     parser.add_argument("--log_file", type=str, default=None,
                         help="Path to log file (if not set, only console logging is used)")
     parser.add_argument("--seed", type=int, default=42,

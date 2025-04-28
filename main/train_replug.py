@@ -70,6 +70,7 @@ def main():
     parser.add_argument('--save_dir',                    type=str,   default='/workspace/output')
     parser.add_argument('--corpus_updates',              type=int,   default=5, help="Number of corpus embedding updates per epoch")
     parser.add_argument('--preprocess_batch_size',       type=int,   default=16, help="Batch size for preprocessing operations")
+    parser.add_argument('--save_checkpoints',            action='store_true', default=False, help="Whether to save model checkpoints during training")
     args = parser.parse_args()
 
     log_wandb = args.log_to_wandb
@@ -742,7 +743,7 @@ def main():
     logger.info("Training complete.")
     if log_wandb:
         wandb.finish()
-    if args.trained_model_save_path:
+    if args.save_checkpoints and args.trained_model_save_path:
         retr_model_base.save_pretrained(args.trained_model_save_path)
         retr_tokenizer.save_pretrained(args.trained_model_save_path)
         logger.info(f"Saved trained base model to {args.trained_model_save_path}")

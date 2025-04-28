@@ -16,6 +16,7 @@ INFERENCE_MODEL=("llama3-8B")  # Default LLM/inference model
 WANDB_RUN_NAME=()  # Empty by default, will be auto-generated if not provided
 WANDB_PROJECT_NAME=("PORTS_AAAI-EMNLP")  # Default project name
 ADDITIONAL_PARAMS=()
+SAVE_CHECKPOINTS=false  # Add save_checkpoints with default to false
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -55,6 +56,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --wandb_project_name=*) 
       IFS=',' read -ra WANDB_PROJECT_NAME <<< "${1#*=}"
+      ;;
+    --save_checkpoints=*) 
+      SAVE_CHECKPOINTS="${1#*=}"
       ;;
     --params=*) 
       # For additional params, we just keep the entire string
@@ -120,6 +124,9 @@ for machine in "${DEST_MACHINE[@]}"; do
                         [[ -n "$ds" ]] && PARAMS="$PARAMS --dataset=$ds"
                         [[ -n "$rm" ]] && PARAMS="$PARAMS --retrieval_model=$rm"
                         [[ -n "$im" ]] && PARAMS="$PARAMS --inference_model=$im"
+                        
+                        # Add save_checkpoints if true
+                        [[ "$SAVE_CHECKPOINTS" == "true" ]] && PARAMS="$PARAMS --save_checkpoints=true"
                         
                         # Simplified WANDB run name: <method>_<dataset>
                         # If custom wandb_run_name was provided, use it instead
