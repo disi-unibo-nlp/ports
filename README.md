@@ -374,34 +374,19 @@ The `run_sbatch.sh` script provides a flexible way to launch multiple training j
 - `--machine=<machine_name>`: Target compute node(s) (e.g., "deeplearn2,faretra"). If omitted, jobs run on any available machine.
 - `--gpu_type=<gpu_type>`: GPU type to request (default: "nvidia_geforce_rtx_3090")
 - `--gpu_count=<count>`: Number of GPUs per job (default: 1)
+- `--retrieval_model=<models>`: Retrieval/encoder models to use (default: "BAAI/bge-base-en-v1.5")
+- `--inference_model=<models>`: Inference/LLM models to use (default: "llama3-8B")
 - `--lr=<learning_rates>`: Learning rate values (e.g., "1e-5,1e-4,1e-3")
 - `--batch_size=<sizes>`: Batch size values (e.g., "2,4,8")
 - `--epochs=<counts>`: Number of epochs (e.g., "1,3,5")
 - `--dataset=<names>`: Dataset names (e.g., "toolbench,apibench")
-- `--wandb_run_name=<name>`: Base name for W&B runs (will be expanded with parameters)
+- `--wandb_run_name=<name>`: Base name for W&B runs (auto-generated if not provided)
+- `--wandb_project_name=<name>`: W&B project name (default: "PORTS_AAAI-EMNLP")
 - `--params="<extra_params>"`: Additional parameters to pass to the training script
 
 #### Using Additional Parameters
 
-The `--params` flag allows you to pass any additional parameters not covered by the standard options. These parameters are passed directly to the underlying training script. Important notes:
-
-1. Enclose all additional parameters in quotes
-2. Use proper parameter format for the target script (usually `--param_name=value`)
-3. Separate multiple parameters with spaces
-4. The entire string is passed as-is to each job in the grid search
-
-**Examples of additional parameters:**
-
-```bash
-# Single additional parameter
---params="--gamma=0.3"
-
-# Multiple additional parameters
---params="--gamma=0.3 --beta=0.7 --pooling=cls"
-
-# Complex parameters with quotes (use escaped quotes)
---params="--wandb_project_name=\"My Project\" --k_eval_values_accuracy=\"1 3 5 10\""
-```
+You can pass any additional parameters not covered by the standard options using the `--params` flag. These parameters are passed directly to the underlying training script.
 
 ### Example Usage
 
@@ -413,7 +398,7 @@ The `--params` flag allows you to pass any additional parameters not covered by 
 #### Grid Search Over Multiple Parameters:
 ```bash
 ./run_sbatch.sh --script=replug --lr=1e-5,1e-4,1e-3 --batch_size=2,4 --epochs=1,3 \
-  --dataset=toolbench --wandb_run_name=replug_grid_search
+  --dataset=toolbench --wandb_project_name=PORTS_EMNLP
 ```
 
 This will launch 12 jobs (3 learning rates × 2 batch sizes × 2 epoch counts) with all combinations.
@@ -426,6 +411,16 @@ This will launch 12 jobs (3 learning rates × 2 batch sizes × 2 epoch counts) w
 
 This will distribute 8 jobs across the specified machines.
 
+#### Model Grid Search:
+```bash
+./run_sbatch.sh --script=ports \
+  --retrieval_model=BAAI/bge-base-en-v1.5,FacebookAI/roberta-base \
+  --inference_model=llama3-8B,gemma2-2B \
+  --dataset=toolbench
+```
+
+This will create 4 jobs testing all combinations of retrieval and inference models.
+
 #### Advanced Usage with Custom Parameters:
 ```bash
 # Adding additional model-specific parameters
@@ -434,10 +429,12 @@ This will distribute 8 jobs across the specified machines.
 
 # Using different evaluation metrics
 ./run_sbatch.sh --script=mnrl --dataset=toolbench \
+  --retrieval_model=BAAI/bge-base-en-v1.5,FacebookAI/roberta-base \
   --params="--k_eval_values_accuracy=\"1 3 5 10\" --k_eval_values_ndcg=\"1 3 5 10\""
 
 # Setting model-specific parameters with different learning rates
 ./run_sbatch.sh --script=replug --lr=1e-5,1e-4 \
+  --inference_model=llama3-8B,gemma2-2B \
   --params="--num_retrieved_docs=5 --corpus_updates=10 --use_4bit=false"
 ```
 
