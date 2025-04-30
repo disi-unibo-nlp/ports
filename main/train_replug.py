@@ -65,6 +65,7 @@ def main():
     parser.add_argument('--max_train_samples',           type=int,   default=None)
     parser.add_argument('--max_eval_samples',            type=int,   default=None)
     parser.add_argument('--retr_max_seq_length',         type=int,   default=512)
+    parser.add_argument('--infer_max_seq_length',         type=int,   default=2048)
     parser.add_argument('--warmup_ratio',                type=float, default=0.1, help="fraction of total training steps for warmup")
     parser.add_argument('--save_strategy',               type=str,   default='epoch')
     parser.add_argument('--save_dir',                    type=str,   default='/workspace/output')
@@ -292,7 +293,7 @@ def main():
             examples["text"], 
             truncation=True, 
             padding="max_length", 
-            max_length=args.retr_max_seq_length, 
+            max_length=args.infer_max_seq_length, 
             return_tensors="pt"
         )
     
