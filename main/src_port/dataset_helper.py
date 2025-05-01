@@ -270,7 +270,7 @@ class DatasetDownloader():
                  seed : int = 42):
 
         self.dataset_name = dataset_name
-        self.data_sub_split = "parsed_data" if dataset_name != "toolbench" else "parsed_data_splitted"
+        self.data_sub_split = "parsed_data" if "toolbench" not in dataset_name else "parsed_data_splitted"
         self.seed = seed
         
         base_ds_path = "ToolRetriever"
@@ -287,6 +287,9 @@ class DatasetDownloader():
             "toole_50_50" : "ToolENonOverlapping",
             "toole_35_65" : "ToolENonOverlapping",
             "toolbench" : "ToolBench",
+            "toolbench_1" : "ToolBench",
+            "toolbench_2" : "ToolBench",
+            "toolbench_3" : "ToolBench",
             "toole-overlap" : "ToolEOverlapping",
             "octopus-overlap" : "OctopusOverlapping"
         }
@@ -313,8 +316,10 @@ class DatasetDownloader():
             print(f"Loading {self.data_path} - {self.data_sub_split}")
             ds = load_dataset(self.data_path, self.data_sub_split)
 
-        # if self.dataset_name == "toolbench":
-        #     ds = ds.filter(lambda x : x["group"] == "G3")
+        if "toolbench" in self.dataset_name:
+            split_group = f"G{self.dataset_name.split('_')[-1]}"
+            for split in ds:
+                ds[split] = ds[split].filter(lambda x : x["group"] == split_group)
         
         if self.dataset_name == "bfcl":
             unique_k = list(ds.keys())[0]

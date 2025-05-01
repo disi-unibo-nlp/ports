@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Default configuration
-OUTPUT_DIR="/home/molfetta/ports/output" 
+OUTPUT_DIR="${HOME}/ports/output" 
 LLM_CACHE_DIR="/llms"
 DOCKER_INTERNAL_CACHE_DIR="/llms"
 DATASET="toolbench"

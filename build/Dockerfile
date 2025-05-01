@@ -26,7 +26,7 @@ COPY build/requirements.txt .
 # Install dependencies from requirements.txt
 RUN pip3 install --no-cache-dir -r requirements.txt
 
-RUN pip3 install flash_attn==2.7.4.post1
+#RUN pip3 install --no-cache-dir flash_attn==2.7.4.post1
 
 COPY . /workspace/
 

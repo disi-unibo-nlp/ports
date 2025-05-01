@@ -17,6 +17,7 @@ WANDB_RUN_NAME=()  # Empty by default, will be auto-generated if not provided
 WANDB_PROJECT_NAME=("PORTS_AAAI-EMNLP")  # Default project name
 ADDITIONAL_PARAMS=()
 SAVE_CHECKPOINTS=false  # Add save_checkpoints with default to false
+INFERENCE_MAX_SEQ_LEN=(1024)  # Default inference max seq length
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -64,6 +65,9 @@ while [[ $# -gt 0 ]]; do
       # For additional params, we just keep the entire string
       ADDITIONAL_PARAMS=("${1#*=}")
       ;;
+    --inference_max_seq_len=*)
+      IFS=',' read -ra INFERENCE_MAX_SEQ_LEN <<< "${1#*=}"
+      ;;
     *) 
       echo "Unknown parameter: $1"
       exit 1 
@@ -96,6 +100,7 @@ esac
 [[ ${#WANDB_RUN_NAME[@]} -eq 0 ]] && WANDB_RUN_NAME=("")
 [[ ${#WANDB_PROJECT_NAME[@]} -eq 0 ]] && WANDB_PROJECT_NAME=("PORTS_AAAI-EMNLP")
 [[ ${#ADDITIONAL_PARAMS[@]} -eq 0 ]] && ADDITIONAL_PARAMS=("")
+[[ ${#INFERENCE_MAX_SEQ_LEN[@]} -eq 0 ]] && INFERENCE_MAX_SEQ_LEN=(1024)
 
 # If no machines specified, set a single empty value to iterate once without machine specification
 [[ ${#DEST_MACHINE[@]} -eq 0 ]] && DEST_MACHINE=("")
@@ -113,70 +118,73 @@ for machine in "${DEST_MACHINE[@]}"; do
             for ds in "${DATASET[@]}"; do
               for rm in "${RETRIEVAL_MODEL[@]}"; do
                 for im in "${INFERENCE_MODEL[@]}"; do
-                  for wr in "${WANDB_RUN_NAME[@]}"; do
-                    for wp in "${WANDB_PROJECT_NAME[@]}"; do
-                      for add_params in "${ADDITIONAL_PARAMS[@]}"; do
-                        # Construct parameter string for this iteration
-                        PARAMS=""
-                        [[ -n "$lr" ]] && PARAMS="$PARAMS --lr=$lr"
-                        [[ -n "$bs" ]] && PARAMS="$PARAMS --batch_size=$bs"
-                        [[ -n "$ep" ]] && PARAMS="$PARAMS --epochs=$ep"
-                        [[ -n "$ds" ]] && PARAMS="$PARAMS --dataset=$ds"
-                        [[ -n "$rm" ]] && PARAMS="$PARAMS --retrieval_model=$rm"
-                        [[ -n "$im" ]] && PARAMS="$PARAMS --inference_model=$im"
-                        
-                        # Add save_checkpoints if true
-                        [[ "$SAVE_CHECKPOINTS" == "true" ]] && PARAMS="$PARAMS --save_checkpoints=true"
-                        
-                        # Simplified WANDB run name: <method>_<dataset>
-                        # If custom wandb_run_name was provided, use it instead
-                        if [[ -n "$wr" ]]; then
-                          PARAMS="$PARAMS --wandb_run_name=$wr"
-                        else
-                          # Auto-generate name based on method and dataset
-                          method_name=$(echo "$SCRIPT_TYPE" | tr '[:lower:]' '[:upper:]')
-                          PARAMS="$PARAMS --wandb_run_name=${method_name}_${ds}"
-                        fi
-                        
-                        # Add W&B project name
-                        [[ -n "$wp" ]] && PARAMS="$PARAMS --wandb_project_name=$wp"
-                        
-                        [[ -n "$add_params" ]] && PARAMS="$PARAMS $add_params"
-                        
-                        # Create a unique job name with model info
-                        job_id="${SCRIPT_TYPE}_${ds}_${im##*/}_${rm##*/}_lr${lr}_bs${bs}_ep${ep}"
-                        job_id=$(echo "$job_id" | tr '/' '-')  # Replace slashes for filename safety
-                        
-                        echo "Submitting job: $job_id"
-                        echo "Parameters: $PARAMS"
-                        
-                        #  Output file name (config params separated by underscores)
-                        OUTPUT_DIR="output/sbatch_output"
-                        mkdir -p "$OUTPUT_DIR"
-                        OUTPUT_FILE="$OUTPUT_DIR/${job_id}.out"
-    
-                        # Prepare sbatch command
-                        sbatch_cmd="sbatch -N 1 --gpus=$gpu_type:$gpu_count --output=$OUTPUT_FILE --error=$OUTPUT_FILE"
-                        
-                        # Only add machine parameter if specified
-                        if [[ -n "$machine" ]]; then
-                          sbatch_cmd="$sbatch_cmd -w $machine"
-                          echo "Running on: $machine with $gpu_count $gpu_type GPU(s)"
-                        else
-                          echo "Running on: any available machine with $gpu_count $gpu_type GPU(s)"
-                        fi
-                        
-                        # Add job name and script
-                        sbatch_cmd="$sbatch_cmd -J \"$job_id\" --wrap=\"$SCRIPT $PARAMS\""
-                        
-                        # Submit job with specified parameters
-                        eval $sbatch_cmd
-                        
-                        # Increment job counter
-                        ((job_count++))
-                        
-                        # Add a small delay between submissions to prevent overwhelming the scheduler
-                        sleep 0.5
+                  for max_seq_len in "${INFERENCE_MAX_SEQ_LEN[@]}"; do
+                    for wr in "${WANDB_RUN_NAME[@]}"; do
+                      for wp in "${WANDB_PROJECT_NAME[@]}"; do
+                        for add_params in "${ADDITIONAL_PARAMS[@]}"; do
+                          # Construct parameter string for this iteration
+                          PARAMS=""
+                          [[ -n "$lr" ]] && PARAMS="$PARAMS --lr=$lr"
+                          [[ -n "$bs" ]] && PARAMS="$PARAMS --batch_size=$bs"
+                          [[ -n "$ep" ]] && PARAMS="$PARAMS --epochs=$ep"
+                          [[ -n "$ds" ]] && PARAMS="$PARAMS --dataset=$ds"
+                          [[ -n "$rm" ]] && PARAMS="$PARAMS --retrieval_model=$rm"
+                          [[ -n "$im" ]] && PARAMS="$PARAMS --inference_model=$im"
+                          [[ -n "$max_seq_len" ]] && PARAMS="$PARAMS --inference_max_seq_len=$max_seq_len"
+                          
+                          # Add save_checkpoints if true
+                          [[ "$SAVE_CHECKPOINTS" == "true" ]] && PARAMS="$PARAMS --save_checkpoints=true"
+                          
+                          # Simplified WANDB run name: <method>_<dataset>
+                          # If custom wandb_run_name was provided, use it instead
+                          if [[ -n "$wr" ]]; then
+                            PARAMS="$PARAMS --wandb_run_name=$wr"
+                          else
+                            # Auto-generate name based on method and dataset
+                            method_name=$(echo "$SCRIPT_TYPE" | tr '[:lower:]' '[:upper:]')
+                            PARAMS="$PARAMS --wandb_run_name=${method_name}_${ds}"
+                          fi
+                          
+                          # Add W&B project name
+                          [[ -n "$wp" ]] && PARAMS="$PARAMS --wandb_project_name=$wp"
+                          
+                          [[ -n "$add_params" ]] && PARAMS="$PARAMS $add_params"
+                          
+                          # Create a unique job name with model info
+                          job_id="${SCRIPT_TYPE}_${ds}_${im##*/}_${rm##*/}_lr${lr}_bs${bs}_ep${ep}"
+                          job_id=$(echo "$job_id" | tr '/' '-')  # Replace slashes for filename safety
+                          
+                          echo "Submitting job: $job_id"
+                          echo "Parameters: $PARAMS"
+                          
+                          #  Output file name (config params separated by underscores)
+                          OUTPUT_DIR="output/sbatch_output"
+                          mkdir -p "$OUTPUT_DIR"
+                          OUTPUT_FILE="$OUTPUT_DIR/${job_id}.out"
+      
+                          # Prepare sbatch command
+                          sbatch_cmd="sbatch -N 1 --gpus=$gpu_type:$gpu_count --output=$OUTPUT_FILE --error=$OUTPUT_FILE"
+                          
+                          # Only add machine parameter if specified
+                          if [[ -n "$machine" ]]; then
+                            sbatch_cmd="$sbatch_cmd -w $machine"
+                            echo "Running on: $machine with $gpu_count $gpu_type GPU(s)"
+                          else
+                            echo "Running on: any available machine with $gpu_count $gpu_type GPU(s)"
+                          fi
+                          
+                          # Add job name and script
+                          sbatch_cmd="$sbatch_cmd -J \"$job_id\" --wrap=\"$SCRIPT $PARAMS\""
+                          
+                          # Submit job with specified parameters
+                          eval $sbatch_cmd
+                          
+                          # Increment job counter
+                          ((job_count++))
+                          
+                          # Add a small delay between submissions to prevent overwhelming the scheduler
+                          sleep 0.5
+                        done
                       done
                     done
                   done

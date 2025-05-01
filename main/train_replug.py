@@ -1,3 +1,6 @@
+import unsloth
+from unsloth import FastLanguageModel
+
 import os
 import argparse
 from transformers import (
@@ -18,8 +21,11 @@ from torch.utils.data import DataLoader
 from torch.optim import AdamW
 import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss, KLDivLoss
-from huggingface_hub import login
-from src.replug.prompts import PROMPT_TEMPLATES, INSTRUCTIONS
+from src.port.prompt_templates import (
+    pseudo_name_mapping,
+    pseudo_name_instr_mapping,
+    PROMPT_TEMPLATES
+)
 import logging
 from sentence_transformers import SentenceTransformer, models
 
@@ -44,7 +50,8 @@ def main():
     parser.add_argument('--dataset',                      type=str,   required=True, help="dataset name for DatasetDownloader")
     parser.add_argument('--retr_model_name_or_path',     type=str,   required=True)
     parser.add_argument('--infer_model_name_or_path',    type=str,   required=True)
-    parser.add_argument('--infer_model_type',            type=str,   choices=['llama3','llama3groq'], default='llama3')
+    parser.add_argument('--infer_model_type',            type=str,   required=True)
+    parser.add_argument('--inference_max_seq_length',    type=int,   default=1024, help="Max sequence length for inference model")
     parser.add_argument('--quantize',                    action='store_true')
     parser.add_argument('--quantization_4bit',           action='store_true')
     parser.add_argument('--batch_size',                  type=int,   default=2)
@@ -96,35 +103,28 @@ def main():
     infer_model_name = args.infer_model_name_or_path
     retr_tokenizer = AutoTokenizer.from_pretrained(retr_model_name)
     retr_model_base = AutoModel.from_pretrained(retr_model_name).to("cuda")
-    infer_tokenizer = AutoTokenizer.from_pretrained(infer_model_name, trust_remote_code=True)
+    
+    # Using Unsloth for faster and more efficient model loading
+    logger.info(f"Loading inference model with Unsloth (4-bit: {args.quantization_4bit})")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    infer_model, infer_tokenizer = FastLanguageModel.from_pretrained(
+        model_name=infer_model_name,
+        max_seq_length=args.inference_max_seq_length,
+        load_in_4bit=args.quantization_4bit,
+        device_map=device,
+    )
+    FastLanguageModel.for_inference(infer_model)
+    logger.info(f"Successfully loaded inference model with Unsloth")
+
     if infer_tokenizer.pad_token is None:
         logger.info("No padding token - using EOS instead")
+        infer_tokenizer.add_special_tokens({'pad_token': '<pad>'})
         infer_tokenizer.pad_token = infer_tokenizer.eos_token
+        infer_tokenizer.pad_token_id = infer_tokenizer.eos_token_id
+        logger.info(f"Inference tokenizer pad_token_id set to: {infer_tokenizer.pad_token_id}")
+    
     infer_tokenizer.padding_side = 'left'
-    if args.quantize:
-        quantization_config = BitsAndBytesConfig(
-            load_in_8bit=False if args.quantization_4bit else True,
-            load_in_4bit=True if args.quantization_4bit else False,
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16
-        )
-        infer_model = AutoModelForCausalLM.from_pretrained(
-            infer_model_name,
-            torch_dtype=torch.bfloat16,
-            quantization_config=quantization_config,
-            trust_remote_code=True,
-            attn_implementation="flash_attention_2"
-        )
-    else:
-        infer_model = AutoModelForCausalLM.from_pretrained(
-            infer_model_name, 
-            torch_dtype=torch.bfloat16, 
-            trust_remote_code=True,
-            attn_implementation="flash_attention_2"
-        ).to("cuda")
-    if verbose:
-        logger.info(f"Model dtype: {next(infer_model.parameters()).dtype}")
+    logger.info(f"Inference tokenizer padding side set to: {infer_tokenizer.padding_side}")
 
     eval_steps_fraction = getattr(args, 'eval_steps', None)
 
@@ -166,10 +166,27 @@ def main():
     infer_model.eval()
     retr_model_base.eval()
 
+    # Map pseudo-name to actual model path and type
     infer_model_type = args.infer_model_type
-    INSTRUCTION = INSTRUCTIONS["function_calling_groq" if infer_model_type == 'llama3groq' else "function_calling"]
-    prompt_template = PROMPT_TEMPLATES[infer_model_type]["prompt_template"]
-    ANSWER = PROMPT_TEMPLATES[infer_model_type]["answer_template"]
+    
+    # Get prompt template and instruction the same way as in main_train_port.py
+    # Find the pseudo-name key that corresponds to this model type
+    pseudo_model_name = None
+    for key, value in pseudo_name_mapping.items():
+        if value == infer_model_name or key == infer_model_type:
+            pseudo_model_name = key
+            break
+    
+    if not pseudo_model_name:
+        logger.warning(f"Could not find matching pseudo_model_name for {infer_model_name}. Using infer_model_type directly.")
+        pseudo_model_name = infer_model_type
+    
+    prompt_config = PROMPT_TEMPLATES[pseudo_model_name]
+    instruction = pseudo_name_instr_mapping[pseudo_model_name]
+    prompt_template = prompt_config["prompt_template"]
+    ANSWER = prompt_config["answer_template"]
+    
+    logger.info(f"Using prompt template and instruction for model: {pseudo_model_name}")
     
     # Load dataset using the DatasetDownloader
     dataset_downloader = DatasetDownloader(dataset_name=args.dataset)
@@ -328,7 +345,7 @@ def main():
     def get_prompts(prompt_template, documents, batch_data, documents_per_query):
         prompts = [
                 prompt_template.format(
-                    INSTRUCTION,
+                    instruction, # Use the instruction from pseudo_name_instr_mapping
                     documents[doc_index], 
                     batch_data["query"][data_index], 
                     batch_data["answer"][data_index]
@@ -493,18 +510,75 @@ def main():
         return scores
 
     def get_sentence_transformer(base_model, device="cuda"):
-        word_embedding_model = models.Transformer(args.retr_model_name_or_path)
+        """
+        Create a SentenceTransformer wrapper that preserves model state.
+        
+        This is crucial for ensuring parameter updates in training
+        are properly reflected in evaluation.
+        """
+        # Create a proper wrapper architecture
+        word_embedding_model = models.Transformer(base_model.config._name_or_path)
+        # Copy the state from the base model to ensure continuity
+        word_embedding_model.auto_model = base_model
+        
         pooling_model = models.Pooling(
             word_embedding_model.get_word_embedding_dimension(),
             pooling_mode_cls_token=True,
             pooling_mode_mean_tokens=False,
             pooling_mode_max_tokens=False
         )
-        return SentenceTransformer(modules=[word_embedding_model, pooling_model], device=device)
+        
+        # Add normalization layer for consistent embeddings
+        normalize = models.Normalize()
+        
+        return SentenceTransformer(modules=[word_embedding_model, pooling_model, normalize], device=device)
+
+    def log_to_wandb(score_dict, epoch, steps, prefix="eval"):
+        """
+        Log metrics to Weights & Biases with proper flattening and organization.
+        """
+        if not log_wandb or wandb.run is None:
+            return
+            
+        log_prefix = f"{prefix}/" if prefix else ""
+        logger.info(f"Logging {prefix} metrics to W&B at epoch {epoch}, step {steps}")
+
+        # Flatten nested dictionaries for better W&B visualization
+        def flatten_dict(d, parent_key='', sep='/'):
+            items = []
+            for k, v in d.items():
+                sanitized_k = str(k).replace('@', '_at_')  # Sanitize keys for W&B
+                new_key = f"{parent_key}{sep}{sanitized_k}" if parent_key else sanitized_k
+                if isinstance(v, dict):
+                    items.extend(flatten_dict(v, new_key, sep=sep).items())
+                elif isinstance(v, (int, float, np.number)):
+                    items.append((new_key, float(v)))
+            return dict(items)
+
+        flat_scores = flatten_dict(score_dict)
+        wandb_log_data = {f"{log_prefix}{k}": v for k, v in flat_scores.items()}
+        wandb_log_data[f"{prefix}/epoch"] = epoch
+        wandb_log_data[f"{prefix}/step"] = steps
+
+        # Log key metrics to console for visibility
+        key_metrics = []
+        for k in k_values_accuracy:
+            if f"cosine_accuracy@{k}" in flat_scores:
+                key_metrics.append((f"R@{k}", flat_scores[f"cosine_accuracy@{k}"]))
+        for k in k_values_ndcg:
+            if f"cosine_ndcg@{k}" in flat_scores:
+                key_metrics.append((f"NDCG@{k}", flat_scores[f"cosine_ndcg@{k}"]))
+        
+        if key_metrics:
+            metrics_str = ", ".join([f"{name}: {value:.4f}" for name, value in key_metrics])
+            logger.info(f"  {metrics_str}")
+        
+        wandb.log(wandb_log_data, step=steps)
 
     steps_per_epoch = len(train_data_loader)
     evaluation_step_interval = None
     run_end_of_epoch_eval = True
+    best_eval_score = 0.0
 
     if eval_steps_fraction is not None and eval_steps_fraction > 0:
         if not (0 < eval_steps_fraction <= 1):
@@ -575,29 +649,19 @@ def main():
         for split_idx, batch_indices in enumerate(data_splits):
             logger.info(f"Processing split {split_idx+1}/{len(data_splits)} with {len(batch_indices)} batches")
             
-            # Create sentence transformer with gradients enabled for the encoder
-            word_embedding_model = models.Transformer(args.retr_model_name_or_path)
-            # Ensure model parameters require gradients
-            for param in word_embedding_model.parameters():
-                param.requires_grad = True
-                
-            pooling_model = models.Pooling(
-                word_embedding_model.get_word_embedding_dimension(),
-                pooling_mode_cls_token=True,
-                pooling_mode_mean_tokens=False,
-                pooling_mode_max_tokens=False
-            )
-            retr_model_train_instance = SentenceTransformer(modules=[word_embedding_model, pooling_model], device="cuda")
-            retr_model_train_instance.train()  # Set to train mode
+            # Important change: Don't create new model instances, use the base model
+            # Create a SentenceTransformer wrapper that shares parameters with the base model
+            retr_model_train_instance = get_sentence_transformer(retr_model_base, device="cuda")
+            retr_model_train_instance.train()
             
-            # Get document embeddings once per split with better batching
+            # Get document embeddings with the current model state
             logger.info(f"Embedding corpus for split {split_idx+1}")
-            with torch.no_grad():
+            with torch.no_grad():  # Only disable gradients for corpus embedding
                 embedded_documents = embed_corpus(retr_model_train_instance,
                                                   retr_tokenizer,
                                                   train_api_corpus,
                                                   device="cuda",
-                                                  batch_size=args.preprocess_batch_size,  # Use preprocessing batch size
+                                                  batch_size=args.preprocess_batch_size,
                                                   max_length=args.retr_max_seq_length)
             
             # Ensure embedded_documents is on CUDA
@@ -611,17 +675,20 @@ def main():
                 global_step += 1
                 curr_bs, batch_data = parse_batch(dataset["train"], batch, batch_idx)
 
-                # Re-encode queries with gradients enabled
-                embedded_queries = retr_model_train_instance.encode(
-                    batch_data["query"],
-                    convert_to_tensor=True,
-                    show_progress_bar=False
-                )
+                # Use the base model directly for query encoding to ensure gradient flow
+                query_inputs = {k: batch[k].to("cuda") for k in ["input_ids", "attention_mask"]}
+                query_outputs = retr_model_base(**query_inputs)
+                embedded_queries = query_outputs.pooler_output  # Use pooler output for CLS token
+                
+                # If pooler_output not available, extract CLS token manually
+                if not hasattr(query_outputs, 'pooler_output'):
+                    embedded_queries = query_outputs.last_hidden_state[:, 0]  # Use CLS token
                 
                 # Manual similarity calculation with gradients
-                embedded_documents_exp = embedded_documents.unsqueeze(0)
-                embedded_queries_exp = embedded_queries.unsqueeze(1)
-                cos_sim = F.cosine_similarity(embedded_documents_exp, embedded_queries_exp, dim=-1)
+                embedded_queries = F.normalize(embedded_queries, p=2, dim=1)
+                embedded_documents_normalized = F.normalize(embedded_documents, p=2, dim=1)
+                
+                cos_sim = torch.matmul(embedded_queries, embedded_documents_normalized.T)
                 
                 # Get top k documents
                 top_k_docs = torch.topk(cos_sim, k, dim=-1)
@@ -631,12 +698,10 @@ def main():
                 # Compute Pr with gradients
                 Pr = compute_Pr(similarities_per_query, gamma)
                 
-                del embedded_queries
+                # Clean up to save memory
+                del query_outputs
                 torch.cuda.empty_cache()
                 
-                # Reset the model to training mode
-                retr_model_base.train()
-
                 prompts = get_prompts(prompt_template, train_api_corpus, batch_data, documents_per_query)
                 inner_data_loader = prepare_inner_data_loader(prompts, curr_bs, inner_tokenize_function, inner_data_collator)
                 perplexities = []
@@ -665,6 +730,13 @@ def main():
                 epoch_loss += loss.item()
                 batch_count += 1
 
+                # Add gradient clipping for stability
+                torch.nn.utils.clip_grad_norm_(retr_model_base.parameters(), max_norm=1.0)
+                
+                # Enhanced logging for better visibility
+                if global_step % 10 == 0:
+                    logger.info(f"Epoch {epoch+1}/{num_epochs} | Step {global_step} | Loss: {loss.item():.4f} | LR: {optimizer.param_groups[0]['lr']:.6f}")
+
                 if log_wandb and global_step % min(20, max(1, len(train_data_loader)//5)) == 0:
                     wandb.log({
                         "train/replug_loss": loss.item(),
@@ -672,6 +744,7 @@ def main():
                         "progress/epoch": epoch + 1,
                     }, step=global_step)
 
+                # Step-based evaluation with proper model handling
                 if evaluation_step_interval is not None and global_step % evaluation_step_interval == 0:
                     logger.info(f"--- Evaluating at Epoch {epoch+1}, Step {current_step_in_epoch}/{steps_per_epoch} (Global Step {global_step}) ---")
                     retr_model_base.eval()
@@ -684,7 +757,7 @@ def main():
                                                                batch_size=args.batch_size,
                                                                max_length=args.retr_max_seq_length)
 
-                    evaluate_with_retrieval_evaluator(
+                    eval_scores = evaluate_with_retrieval_evaluator(
                         retr_model_eval=retr_model_eval_instance,
                         eval_dataset_split=dataset[eval_split_name],
                         eval_api_corpus=eval_api_corpus,
@@ -697,6 +770,24 @@ def main():
                         epoch=epoch + 1,
                         steps=global_step
                     )
+                    
+                    # Track best model for potential checkpointing
+                    current_score = None
+                    for k in [1]:  # Use R@1 as primary metric
+                        score_key = f"cosine_accuracy@{k}"
+                        if score_key in eval_scores:
+                            current_score = eval_scores[score_key]
+                            break
+                    
+                    if current_score and current_score > best_eval_score:
+                        best_eval_score = current_score
+                        if args.save_checkpoints:
+                            best_model_path = os.path.join(args.save_dir, "best_model")
+                            os.makedirs(best_model_path, exist_ok=True)
+                            retr_model_base.save_pretrained(best_model_path)
+                            retr_tokenizer.save_pretrained(best_model_path)
+                            logger.info(f"New best model saved with score {current_score:.4f}")
+                    
                     retr_model_base.train()
                     del embedded_eval_documents, retr_model_eval_instance
                     torch.cuda.empty_cache()
@@ -722,7 +813,7 @@ def main():
                                                            batch_size=args.preprocess_batch_size,  # Use preprocessing batch size
                                                            max_length=args.retr_max_seq_length)
 
-                evaluate_with_retrieval_evaluator(
+                eval_scores = evaluate_with_retrieval_evaluator(
                     retr_model_eval=retr_model_eval_instance,
                     eval_dataset_split=dataset[eval_split_name],
                     eval_api_corpus=eval_api_corpus,
@@ -735,11 +826,29 @@ def main():
                     epoch=epoch + 1,
                     steps=global_step
                 )
+                
+                # Track best model for potential checkpointing
+                current_score = None
+                for k in [1]:  # Use R@1 as primary metric
+                    score_key = f"cosine_accuracy@{k}"
+                    if score_key in eval_scores:
+                        current_score = eval_scores[score_key]
+                        break
+                
+                if current_score and current_score > best_eval_score:
+                    best_eval_score = current_score
+                    if args.save_checkpoints:
+                        best_model_path = os.path.join(args.save_dir, "best_model")
+                        os.makedirs(best_model_path, exist_ok=True)
+                        retr_model_base.save_pretrained(best_model_path)
+                        retr_tokenizer.save_pretrained(best_model_path)
+                        logger.info(f"New best model saved with score {current_score:.4f}")
+                
                 retr_model_base.train()
                 del embedded_eval_documents, retr_model_eval_instance
                 torch.cuda.empty_cache()
 
-    logger.info("Training complete.")
+    logger.info(f"Training complete. Best evaluation score: {best_eval_score:.4f}")
     if log_wandb:
         wandb.finish()
     if args.save_checkpoints and args.trained_model_save_path:

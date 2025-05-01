@@ -36,14 +36,21 @@ pseudo_name_mapping = {
     "llama3-8B" : "meta-llama/Meta-Llama-3-8B-Instruct",
     'codestral-22B' : "mistralai/Codestral-22B-v0.1",
     'gemma2-2B' : "google/gemma-2-2b-it",
-    'groqLlama3Tool-8B' : "Groq/Llama-3-Groq-8B-Tool-Use"
+    'groqLlama3Tool-8B' : "Groq/Llama-3-Groq-8B-Tool-Use",
+    'groqLlama3Tool-8B' : "Groq/Llama-3-Groq-8B-Tool-Use",
+    "gemma3" : "google/gemma-3-4b-it",
+    "qwen3" : "Qwen/Qwen3-4B",
+    "llama3.2" : "meta-llama/Llama-3.2-3B-Instruct"
 }
 
 pseudo_name_instr_mapping = {
     "llama3-8B" : INSTRUCTION,
     'codestral-22B' : INSTRUCTION,
     'gemma2-2B' : INSTRUCTION,
-    'groqLlama3Tool-8B' : TOOL_LLAMA_GROQ_PROMPT
+    'groqLlama3Tool-8B' : TOOL_LLAMA_GROQ_PROMPT,
+    "gemma3" : INSTRUCTION,
+    "qwen3" : INSTRUCTION,
+    "llama3.2" : INSTRUCTION
 }
 
 
@@ -77,5 +84,28 @@ PROMPT_TEMPLATES = {
             '<|eot_id|><|start_header_id|>assistant<|end_header_id|>{answer}<|eot_id|>'
         ),
         'answer_template' : '<|start_header_id|>assistant<|end_header_id|>'
+    },
+    'qwen3' : {
+        'prompt_template' : (
+            '<|im_start|>system\n{instruction}\n{api_def}'
+            '<|im_end|>\n<|im_start|>user\n{query}'
+            '<|im_end|>\n<|im_start|>assistant\n{answer}<|im_end|>'
+        ),
+        'answer_template' : '<|im_start|>assistant'
+    },
+    'llama3.2'  : {
+        'prompt_template' : (
+            '<|begin_of_text|><|start_header_id|>system<|end_header_id|>{instruction}\n{api_def}'
+            '<|eot_id|><|start_header_id|>user<|end_header_id|>{query}:<|eot_id|>'
+            '<|start_header_id|>assistant<|end_header_id|>{answer}<|eot_id|>'
+        ),
+        'answer_template' : '<|start_header_id|>assistant<|end_header_id|>'
+    },
+    'gemma3' : {
+        'prompt_template' : (
+            '<bos><start_of_turn>user\n{instruction}\n{api_def}\n\n{query}'
+            '<end_of_turn>\n<start_of_turn>model\n{answer}<end_of_turn>'
+        ),
+        'answer_template' : '<start_of_turn>model'
     }
 }

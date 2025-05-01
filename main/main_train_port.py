@@ -1,3 +1,6 @@
+import unsloth
+from unsloth import FastLanguageModel
+
 import wandb
 import math
 from tqdm import tqdm
@@ -32,6 +35,7 @@ from transformers import (
 )
 from trl import DataCollatorForCompletionOnlyLM
 from datasets import Dataset, load_from_disk
+
 
 import sys
 import os
@@ -1035,12 +1039,12 @@ def main():
     # ******************** Argument Parsing ********************
     parser = argparse.ArgumentParser(description='PORT training script')
     # --- Dataset Args ---
-    parser.add_argument('--dataset', type=str, default="bfcl", choices=["bfcl", "apibank", "apibench", "octopus", "octopus-overlap", "toole", "toole-overlap", "toolbench", "toole_90_10", "toole_85_15", "toole_75_25", "toole_70_30", "toole_50_50", "toole_35_65"], help='Dataset name for training and evaluation.')
+    parser.add_argument('--dataset', type=str, default="bfcl", choices=["bfcl", "apibank", "apibench", "octopus", "octopus-overlap", "toole", "toole-overlap", "toolbench", "toolbench_1", "toolbench_2", "toolbench_3", "toole_90_10", "toole_85_15", "toole_75_25", "toole_70_30", "toole_50_50", "toole_35_65"], help='Dataset name for training and evaluation.')
     parser.add_argument('--max_train_samples', type=int, default=None, help="Maximum number of training instances to use (samples randomly). Default: use all.")
     parser.add_argument('--max_eval_samples', type=int, default=None, help="Maximum number of evaluation instances to use (samples randomly). Default: use all.")
 
     # --- Model Args ---
-    parser.add_argument('--inference_model_name', type=str, default="llama3-8B", choices=["llama3-8B", "codestral-22B", "gemma2-2B", "groqLlama3Tool-8B"], help="Pseudo-name of the generative model (LLM) used for perplexity calculation.")
+    parser.add_argument('--inference_model_name', type=str, default="llama3.2", choices=["llama3-8B", "codestral-22B", "gemma2-2B", "groqLlama3Tool-8B","llama3.2","gemma3","qwen3"], help="Pseudo-name of the generative model (LLM) used for perplexity calculation.")
     parser.add_argument('--retrieval_model_name', type=str, default="FacebookAI/roberta-base", help="Hugging Face model name or path for the retrieval model to be trained.")
     parser.add_argument('--retriever_max_seq_length', type=int, default=514, help="Max sequence length for the retriever model tokenizer.")
     parser.add_argument('--inference_max_seq_length', type=int, default=1024, help="Max sequence length for the inference model tokenizer.")
@@ -1109,28 +1113,17 @@ def main():
     pseudo_model_name = args.inference_model_name
     infer_model_name = pseudo_name_mapping[pseudo_model_name] # Get actual HF name
     logger.info(f"Actual Inference Model Path: {infer_model_name}")
-    infer_tokenizer = AutoTokenizer.from_pretrained(infer_model_name)
-
-    # --- Configure Inference Model Loading (Quantization, Device Map) ---
-    model_kwargs = {
-        "device_map": device, # Simple mapping to the determined device
-        "attn_implementation": "flash_attention_2" # Use Flash Attention if available
-    }
-    if args.load_in_4bit:
-        logger.info("Loading inference model with 4-bit quantization.")
-        nf4_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_compute_dtype=torch.bfloat16 # Recommended compute dtype for 4-bit
-        )
-        model_kwargs["quantization_config"] = nf4_config
-        if device == "cuda":
-             model_kwargs["device_map"] = {"":0} # Map all layers to GPU 0 for BNB
-        else:
-             model_kwargs["device_map"] = "cpu"
-
-    infer_model = AutoModelForCausalLM.from_pretrained(infer_model_name, **model_kwargs)
+    
+    # Using Unsloth for faster and more efficient model loading
+    logger.info(f"Loading inference model with Unsloth (4-bit: {args.load_in_4bit})")
+    infer_model, infer_tokenizer = FastLanguageModel.from_pretrained(
+        model_name=infer_model_name,
+        max_seq_length=args.inference_max_seq_length,
+        load_in_4bit=args.load_in_4bit,
+        device_map=device,
+    )
+    FastLanguageModel.for_inference(infer_model)
+    logger.info(f"Successfully loaded inference model with Unsloth")
 
     # ******************** Configure Tokenizers (Padding) ********************
     # --- Inference Tokenizer ---
@@ -1139,7 +1132,7 @@ def main():
         infer_tokenizer.add_special_tokens({'pad_token': '<pad>'}) 
         infer_tokenizer.pad_token = infer_tokenizer.eos_token
         infer_tokenizer.pad_token_id = infer_tokenizer.eos_token_id
-        infer_model.resize_token_embeddings(len(infer_tokenizer)) 
+        # No need to explicitly resize embeddings for Unsloth models
         logger.info(f"Inference tokenizer pad_token_id set to: {infer_tokenizer.pad_token_id}")
 
     infer_tokenizer.padding_side = args.padding_side

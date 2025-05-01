@@ -1,7 +1,7 @@
 #!/bin/bash
 
 
-PHYS_DIR="/home/molfetta/ports" 
+PHYS_DIR="${HOME}/ports" 
 LLM_CACHE_DIR="/llms"
 DOCKER_INTERNAL_CACHE_DIR="/llms"
 

@@ -25,7 +25,7 @@ WANDB_PROJECT_NAME="${WANDB_PROJECT_NAME:-MNRL_Training}"
 WANDB_RUN_NAME="${WANDB_RUN_NAME:-MNRL-${DATASET_NAME}-$(basename ${MODEL_NAME})-LR${LR}-E${EPOCHS}}"
 LOG_FREQ=${LOG_FREQ:-50}
 
-OUTPUT_DIR="${OUTPUT_DIR:-/home/molfetta/ports/main/output/mnrl/mnrl_retriever_${DATASET_NAME}_$(basename ${MODEL_NAME})_$(date +%Y%m%d_%H%M%S)}"
+OUTPUT_DIR="${OUTPUT_DIR:-${HOME}/ports/main/output/mnrl/mnrl_retriever_${DATASET_NAME}_$(basename ${MODEL_NAME})_$(date +%Y%m%d_%H%M%S)}"
 
 # Add save_checkpoints parameter
 SAVE_CHECKPOINTS="${SAVE_CHECKPOINTS:-false}"

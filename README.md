@@ -28,6 +28,7 @@ This repository contains the code and datasets for reproducing the experiments d
 - [Script-based Training](#script-based-training)
 - [Sbatch-based Grid Search Training](#sbatch-based-grid-search-training)
 - [Main Accuracy Results](#main-accuracy-results)
+- [Unsloth Integration](#unsloth-integration)
 
 ## Model
 
@@ -424,8 +425,8 @@ This will create 4 jobs testing all combinations of retrieval and inference mode
 #### Advanced Usage with Custom Parameters:
 ```bash
 # Adding additional model-specific parameters
-./run_sbatch.sh --script=ports --lr=1e-5 --batch_size=2 \
-  --params="--gamma=0.3 --beta=0.7 --preprocess_batch_size=32 --eval_steps=0.1"
+./run_sbatch.sh --script=ports --lr=1e-5 --batch_size=2 --machine=faretra --dataset=toolbench_3 --retrieval_model=answerdotai/ModernBERT-base \
+  --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=32 --eval_steps=0.25 --inference_model=qwen3"
 
 # Using different evaluation metrics
 ./run_sbatch.sh --script=mnrl --dataset=toolbench \
@@ -440,7 +441,11 @@ This will create 4 jobs testing all combinations of retrieval and inference mode
 
 Run over all datasets
 ```bash
-./run_sbatch.sh --script=mnrl --lr=2e-5 --retrieval_model=BAAI/bge-base-en-v1.5,FacebookAI/roberta-base --batch_size=2 --epochs=1 --wandb_project_name=PORTS_EMNLP --dataset=bfcl,apibank,apibench,octopus,toole,toolbench,toole-overlap,octopus-overlap
+./run_sbatch.sh --script=ports --lr=2e-5 --retrieval_model=BAAI/bge-base-en-v1.5,FacebookAI/roberta-base --batch_size=2 --epochs=1 --wandb_project_name=PORTS_EMNLP --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap
+
+./run_sbatch.sh --script=mnrl --lr=2e-5,1e-4 --retrieval_model=BAAI/bge-base-en-v1.5,FacebookAI/roberta-base --batch_size=2 --epochs=1 --wandb_project_name=PORTS_EMNLP --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap
+
+./run_sbatch.sh --script=replug --lr=2e-5 --retrieval_model=FacebookAI/roberta-base --batch_size=2 --epochs=1 --wandb_project_name=PORTS_EMNLP --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap
 ```
 
 ### Common Additional Parameters
@@ -473,6 +478,26 @@ The script will:
 6. Display a summary of all submitted jobs
 
 This approach enables efficient hyperparameter tuning and experimentation across multiple compute resources.
+
+## Unsloth Integration
+
+This project uses [Unsloth](https://github.com/unslothai/unsloth) to optimize LLM loading and inference. Unsloth provides faster inference and reduced memory usage for large language models. Both PORTS and RePlug implementations have been updated to use Unsloth for loading and optimizing inference models.
+
+Key features of the Unsloth integration:
+
+- **Faster model loading**: Significantly reduces the time needed to load large language models
+- **Memory efficiency**: Better memory management, especially when using 4-bit quantization
+- **Optimized inference**: FlashAttention and other optimizations for faster responses
+- **Compatibility**: Works seamlessly with our existing model interfaces
+
+To use a model with Unsloth, no special parameters are needed as it's now the default loading mechanism for all inference models. The quantization settings are controlled via the usual parameters:
+
+```bash
+make ports USE_4BIT=true  # Uses Unsloth with 4-bit quantization (default)
+make replug USE_4BIT=false  # Uses Unsloth without quantization
+```
+
+The integration is transparently handled in both training pipelines, so all existing scripts and commands will continue to work as before, but with improved performance.
 
 ## Main Accuracy Results
 
