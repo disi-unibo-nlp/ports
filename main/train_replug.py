@@ -291,7 +291,7 @@ def main():
         return infer_tokenizer(
             examples["text"], 
             truncation=True, 
-            padding="max_length", 
+            padding=True, 
             return_tensors="pt"
         )
     
