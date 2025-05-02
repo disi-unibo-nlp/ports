@@ -342,13 +342,13 @@ def main():
         loss = divergence.mean()
         return loss
 
-    def get_prompts(prompt_template, documents, batch_data, documents_per_query):
+    def get_prompts(prompt_template, instruction, documents, batch_data, documents_per_query):
         prompts = [
                 prompt_template.format(
-                    instruction, # Use the instruction from pseudo_name_instr_mapping
-                    documents[doc_index], 
-                    batch_data["query"][data_index], 
-                    batch_data["answer"][data_index]
+                    instruction=instruction, # Use the instruction from pseudo_name_instr_mapping
+                    api_def=documents[doc_index], # Map document to api_def
+                    query=batch_data["query"][data_index], # Map query
+                    answer=batch_data["answer"][data_index] # Map answer
                 )
                 for i_th_doc in range(documents_per_query.size(1))
                 for data_index, doc_index in enumerate(documents_per_query[:, i_th_doc])
@@ -736,7 +736,7 @@ def main():
                 del query_outputs
                 torch.cuda.empty_cache()
                 
-                prompts = get_prompts(prompt_template, train_api_corpus, batch_data, documents_per_query)
+                prompts = get_prompts(prompt_template, instruction, train_api_corpus, batch_data, documents_per_query)
                 inner_data_loader = prepare_inner_data_loader(prompts, curr_bs, inner_tokenize_function, inner_data_collator)
                 perplexities = []
                 for inner_batch in inner_data_loader:
