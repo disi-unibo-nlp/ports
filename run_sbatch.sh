@@ -201,9 +201,23 @@ for machine in "${DEST_MACHINE[@]}"; do
                                     
                                     [[ -n "$add_params" ]] && PARAMS="$PARAMS $add_params"
                                     
-                                    # Create a unique job name with model info
+                                    # Create a unique job name with model info and all parameters
                                     job_id="${SCRIPT_TYPE}_${ds}_${im##*/}_${rm##*/}_lr${lr}_bs${bs}_ep${ep}"
-                                    job_id=$(echo "$job_id" | tr '/' '-')  # Replace slashes for filename safety
+                                    
+                                    # Add new parameters to job name for better tracking
+                                    if [[ "$SCRIPT_TYPE" == "ports" || "$SCRIPT_TYPE" == "replug" ]]; then
+                                      job_id="${job_id}_b${beta}_g${gamma}"
+                                    fi
+                                    
+                                    if [[ "$SCRIPT_TYPE" == "ports" ]]; then
+                                      job_id="${job_id}_lam${lambda_loss}_pref${pref_weight}"
+                                    fi
+                                    
+                                    # Add weight decay to all job types
+                                    job_id="${job_id}_wd${weight_decay}"
+                                    
+                                    # Sanitize for filename safety
+                                    job_id=$(echo "$job_id" | tr '/' '-' | tr '.' '_')
                                     
                                     echo "Submitting job: $job_id"
                                     echo "Parameters: $PARAMS"
