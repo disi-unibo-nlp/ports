@@ -28,6 +28,7 @@ K_EVAL_VALUES_NDCG="1 3 5"
 CORPUS_UPDATES=5
 PREPROCESS_BATCH_SIZE=64
 SAVE_CHECKPOINTS=false
+WEIGHT_DECAY=0.01
 
 # Parse command-line arguments
 while [[ $# -gt 0 ]]; do
@@ -57,6 +58,10 @@ while [[ $# -gt 0 ]]; do
     --preprocess_batch_size=*) PREPROCESS_BATCH_SIZE="${1#*=}" ;;
     --output_dir=*) OUTPUT_DIR="${1#*=}" ;;
     --save_checkpoints=*) SAVE_CHECKPOINTS="${1#*=}" ;;
+    --weight_decay=*) WEIGHT_DECAY="${1#*=}" ;;
+    --lambda_loss=*) ;; # Accept but ignore
+    --lambda_weight=*) ;; # Accept but ignore
+    --preference_weight=*) ;; # Accept but ignore
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
   shift
@@ -95,4 +100,5 @@ docker run \
     K_EVAL_VALUES_NDCG="$K_EVAL_VALUES_NDCG" \
     CORPUS_UPDATES=$CORPUS_UPDATES \
     PREPROCESS_BATCH_SIZE=$PREPROCESS_BATCH_SIZE \
-    SAVE_CHECKPOINTS=$SAVE_CHECKPOINTS
+    SAVE_CHECKPOINTS=$SAVE_CHECKPOINTS \
+    WEIGHT_DECAY=$WEIGHT_DECAY

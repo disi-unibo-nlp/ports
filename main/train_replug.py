@@ -657,12 +657,46 @@ def main():
             # Get document embeddings with the current model state
             logger.info(f"Embedding corpus for split {split_idx+1}")
             with torch.no_grad():  # Only disable gradients for corpus embedding
-                embedded_documents = embed_corpus(retr_model_train_instance,
-                                                  retr_tokenizer,
-                                                  train_api_corpus,
-                                                  device="cuda",
-                                                  batch_size=args.preprocess_batch_size,
-                                                  max_length=args.retr_max_seq_length)
+                # Clear CUDA cache before embedding
+                torch.cuda.empty_cache()
+                
+                # Process the corpus in smaller chunks if it's large
+                MAX_SAFE_CORPUS_SIZE = 1000  # Adjust based on available GPU memory
+                if len(train_api_corpus) > MAX_SAFE_CORPUS_SIZE:
+                    logger.info(f"Large corpus detected ({len(train_api_corpus)} items). Processing in chunks.")
+                    
+                    all_embeddings = []
+                    chunk_size = MAX_SAFE_CORPUS_SIZE
+                    for i in range(0, len(train_api_corpus), chunk_size):
+                        chunk = train_api_corpus[i:i+chunk_size]
+                        logger.info(f"  Embedding corpus chunk {i//chunk_size + 1}/{math.ceil(len(train_api_corpus)/chunk_size)} ({len(chunk)} items)")
+                        
+                        chunk_embeddings = embed_corpus(
+                            retr_model_train_instance,
+                            retr_tokenizer,
+                            chunk,
+                            device="cuda",
+                            batch_size=min(args.preprocess_batch_size, 8),  # Use smaller batch size
+                            max_length=args.retr_max_seq_length
+                        )
+                        all_embeddings.append(chunk_embeddings)
+                        # Force garbage collection
+                        torch.cuda.empty_cache()
+                        import gc
+                        gc.collect()
+                    
+                    # Concatenate all chunk embeddings
+                    embedded_documents = torch.cat(all_embeddings, dim=0)
+                else:
+                    # Original code for smaller corpus
+                    embedded_documents = embed_corpus(
+                        retr_model_train_instance,
+                        retr_tokenizer,
+                        train_api_corpus,
+                        device="cuda",
+                        batch_size=args.preprocess_batch_size,
+                        max_length=args.retr_max_seq_length
+                    )
             
             # Ensure embedded_documents is on CUDA
             if embedded_documents.device.type != "cuda":

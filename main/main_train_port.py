@@ -690,6 +690,39 @@ def train(dataset: Dataset,
         logger.info(f"Starting training epoch {epoch+1}/{num_epochs}")
         epoch_loss = 0.0
         epoch_steps = 0
+        
+        # ******************** Calculate Total Steps per Epoch ********************
+        total_epoch_steps = 0
+        for ds_split in data_splits:
+            train_data_config = {
+                "dataset": ds_split,
+                "api_corpus_list": train_api_corpus,
+                "retr_model": retr_model,
+                "retrieval_max_length": retriever_max_seq_length,
+                "generateor_max_length": inference_max_seq_length,
+                "retrieval_tokenizer": retr_tokenizer,
+                "inference_tokenizer": infer_tokenizer,
+                "epoch_number": epoch,
+                "batch_size": train_batch_size,
+                "prompt_template": prompt_template,
+                "num_neg_examples": number_of_neg_examples,
+                "preprocessing_batch_size": preprocessing_batch_size
+            }
+            # Get dataloader length to calculate steps
+            total_epoch_steps += len(get_train_dataloader(**train_data_config))
+        
+        # ******************** Step-based Evaluation Setup ********************
+        evaluation_step_interval = None
+        if eval_strategy == "steps" and eval_steps is not None:
+            if not (0 < eval_steps <= 1):
+                # Ensure eval_steps is a valid fraction
+                raise ValueError("eval_steps must be a float between 0 (exclusive) and 1 (inclusive) when eval_strategy is 'steps'")
+            # Calculate the step interval for evaluation across the entire epoch
+            evaluation_step_interval = max(1, int(total_epoch_steps * eval_steps))
+            logger.info(f"Evaluation strategy: 'steps'. Evaluating every {evaluation_step_interval} steps ({eval_steps*100:.2f}% of {total_epoch_steps} total steps in epoch).")
+        
+        # Reset step counter for each epoch (for epoch-based evaluation)
+        epoch_step_counter = 0
 
         # ******************** Data Split Loop ********************
         for split_idx, ds_split in enumerate(data_splits):
@@ -714,16 +747,6 @@ def train(dataset: Dataset,
             steps_per_split = len(triplet_dataloader)
             epoch_steps += steps_per_split # Accumulate steps for epoch avg loss
             
-            # ******************** Step-based Evaluation Setup ********************
-            evaluation_step_interval = None
-            if eval_strategy == "steps" and eval_steps is not None:
-                if not (0 < eval_steps <= 1):
-                    # Ensure eval_steps is a valid fraction
-                    raise ValueError("eval_steps must be a float between 0 (exclusive) and 1 (inclusive) when eval_strategy is 'steps'")
-                # Calculate the step interval for evaluation within this split
-                evaluation_step_interval = max(1, int(steps_per_split * eval_steps))
-                logger.info(f"Evaluation strategy: 'steps'. Evaluating every {evaluation_step_interval} steps ({eval_steps*100:.2f}% of {steps_per_split} steps in this split).")
-
             # ******************** Batch Loop (Training Step) ********************
             pbar = tqdm(enumerate(triplet_dataloader), 
                         total=steps_per_split, 
@@ -732,6 +755,7 @@ def train(dataset: Dataset,
 
             for batch_idx, batch in pbar:
                 global_step_counter += 1 # Increment global step counter
+                epoch_step_counter += 1 # Increment epoch step counter
 
                 # --- Move batch tensors to device ---
                 queries = {k: v.to(device) for k, v in batch["query"].items()}
@@ -934,7 +958,7 @@ def train(dataset: Dataset,
 
                 # ******************** Step-based Evaluation Trigger ********************
                 if eval_strategy == "steps" and evaluation_step_interval is not None and global_step_counter % evaluation_step_interval == 0:
-                    logger.info(f"--- Running Step-Based Evaluation (Step: {global_step_counter}) ---")
+                    logger.info(f"--- Running Step-Based Evaluation (Step: {global_step_counter}, {((epoch_step_counter/total_epoch_steps)*100):.1f}% through epoch) ---")
                     eval_config_step = {
                         "retr_model" : retr_model,
                         "retr_tokenizer" : retr_tokenizer,

@@ -19,6 +19,13 @@ ADDITIONAL_PARAMS=()
 SAVE_CHECKPOINTS=false  # Add save_checkpoints with default to false
 INFERENCE_MAX_SEQ_LEN=(1024)  # Default inference max seq length
 
+# New parameters
+BETA=(1.0)  # Default beta value
+GAMMA=(1.0)  # Default gamma value
+LAMBDA_LOSS=(0.2)  # Default lambda loss value
+PREFERENCE_WEIGHT=(0.1)  # Default preference weight
+WEIGHT_DECAY=(0.01)  # Default weight decay
+
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -68,6 +75,22 @@ while [[ $# -gt 0 ]]; do
     --inference_max_seq_len=*)
       IFS=',' read -ra INFERENCE_MAX_SEQ_LEN <<< "${1#*=}"
       ;;
+    # New parameter options
+    --beta=*)
+      IFS=',' read -ra BETA <<< "${1#*=}"
+      ;;
+    --gamma=*)
+      IFS=',' read -ra GAMMA <<< "${1#*=}"
+      ;;
+    --lambda_loss=*)
+      IFS=',' read -ra LAMBDA_LOSS <<< "${1#*=}"
+      ;;
+    --preference_weight=*)
+      IFS=',' read -ra PREFERENCE_WEIGHT <<< "${1#*=}"
+      ;;
+    --weight_decay=*)
+      IFS=',' read -ra WEIGHT_DECAY <<< "${1#*=}"
+      ;;
     *) 
       echo "Unknown parameter: $1"
       exit 1 
@@ -101,6 +124,12 @@ esac
 [[ ${#WANDB_PROJECT_NAME[@]} -eq 0 ]] && WANDB_PROJECT_NAME=("PORTS_AAAI-EMNLP")
 [[ ${#ADDITIONAL_PARAMS[@]} -eq 0 ]] && ADDITIONAL_PARAMS=("")
 [[ ${#INFERENCE_MAX_SEQ_LEN[@]} -eq 0 ]] && INFERENCE_MAX_SEQ_LEN=(1024)
+# Default values for new parameters if empty
+[[ ${#BETA[@]} -eq 0 ]] && BETA=(1.0)
+[[ ${#GAMMA[@]} -eq 0 ]] && GAMMA=(1.0)
+[[ ${#LAMBDA_LOSS[@]} -eq 0 ]] && LAMBDA_LOSS=(0.2)
+[[ ${#PREFERENCE_WEIGHT[@]} -eq 0 ]] && PREFERENCE_WEIGHT=(0.1)
+[[ ${#WEIGHT_DECAY[@]} -eq 0 ]] && WEIGHT_DECAY=(0.01)
 
 # If no machines specified, set a single empty value to iterate once without machine specification
 [[ ${#DEST_MACHINE[@]} -eq 0 ]] && DEST_MACHINE=("")
@@ -119,71 +148,98 @@ for machine in "${DEST_MACHINE[@]}"; do
               for rm in "${RETRIEVAL_MODEL[@]}"; do
                 for im in "${INFERENCE_MODEL[@]}"; do
                   for max_seq_len in "${INFERENCE_MAX_SEQ_LEN[@]}"; do
-                    for wr in "${WANDB_RUN_NAME[@]}"; do
-                      for wp in "${WANDB_PROJECT_NAME[@]}"; do
-                        for add_params in "${ADDITIONAL_PARAMS[@]}"; do
-                          # Construct parameter string for this iteration
-                          PARAMS=""
-                          [[ -n "$lr" ]] && PARAMS="$PARAMS --lr=$lr"
-                          [[ -n "$bs" ]] && PARAMS="$PARAMS --batch_size=$bs"
-                          [[ -n "$ep" ]] && PARAMS="$PARAMS --epochs=$ep"
-                          [[ -n "$ds" ]] && PARAMS="$PARAMS --dataset=$ds"
-                          [[ -n "$rm" ]] && PARAMS="$PARAMS --retrieval_model=$rm"
-                          [[ -n "$im" ]] && PARAMS="$PARAMS --inference_model=$im"
-                          [[ -n "$max_seq_len" ]] && PARAMS="$PARAMS --inference_max_seq_len=$max_seq_len"
-                          
-                          # Add save_checkpoints if true
-                          [[ "$SAVE_CHECKPOINTS" == "true" ]] && PARAMS="$PARAMS --save_checkpoints=true"
-                          
-                          # Simplified WANDB run name: <method>_<dataset>
-                          # If custom wandb_run_name was provided, use it instead
-                          if [[ -n "$wr" ]]; then
-                            PARAMS="$PARAMS --wandb_run_name=$wr"
-                          else
-                            # Auto-generate name based on method and dataset
-                            method_name=$(echo "$SCRIPT_TYPE" | tr '[:lower:]' '[:upper:]')
-                            PARAMS="$PARAMS --wandb_run_name=${method_name}_${ds}"
-                          fi
-                          
-                          # Add W&B project name
-                          [[ -n "$wp" ]] && PARAMS="$PARAMS --wandb_project_name=$wp"
-                          
-                          [[ -n "$add_params" ]] && PARAMS="$PARAMS $add_params"
-                          
-                          # Create a unique job name with model info
-                          job_id="${SCRIPT_TYPE}_${ds}_${im##*/}_${rm##*/}_lr${lr}_bs${bs}_ep${ep}"
-                          job_id=$(echo "$job_id" | tr '/' '-')  # Replace slashes for filename safety
-                          
-                          echo "Submitting job: $job_id"
-                          echo "Parameters: $PARAMS"
-                          
-                          #  Output file name (config params separated by underscores)
-                          OUTPUT_DIR="output/sbatch_output"
-                          mkdir -p "$OUTPUT_DIR"
-                          OUTPUT_FILE="$OUTPUT_DIR/${job_id}.out"
+                    for beta in "${BETA[@]}"; do
+                      for gamma in "${GAMMA[@]}"; do
+                        for lambda_loss in "${LAMBDA_LOSS[@]}"; do
+                          for pref_weight in "${PREFERENCE_WEIGHT[@]}"; do
+                            for weight_decay in "${WEIGHT_DECAY[@]}"; do
+                              for wr in "${WANDB_RUN_NAME[@]}"; do
+                                for wp in "${WANDB_PROJECT_NAME[@]}"; do
+                                  for add_params in "${ADDITIONAL_PARAMS[@]}"; do
+                                    # Construct parameter string for this iteration
+                                    PARAMS=""
+                                    [[ -n "$lr" ]] && PARAMS="$PARAMS --lr=$lr"
+                                    [[ -n "$bs" ]] && PARAMS="$PARAMS --batch_size=$bs"
+                                    [[ -n "$ep" ]] && PARAMS="$PARAMS --epochs=$ep"
+                                    [[ -n "$ds" ]] && PARAMS="$PARAMS --dataset=$ds"
+                                    [[ -n "$rm" ]] && PARAMS="$PARAMS --retrieval_model=$rm"
+                                    [[ -n "$im" ]] && PARAMS="$PARAMS --inference_model=$im"
+                                    [[ -n "$max_seq_len" ]] && PARAMS="$PARAMS --inference_max_seq_len=$max_seq_len"
+                                    
+                                    # Add parameters with appropriate names based on script type
+                                    [[ -n "$beta" ]] && PARAMS="$PARAMS --beta=$beta"
+                                    [[ -n "$gamma" ]] && PARAMS="$PARAMS --gamma=$gamma"
+                                    
+                                    # Handle parameters that have different names in different scripts
+                                    if [[ "$SCRIPT_TYPE" == "ports" ]]; then
+                                        [[ -n "$lambda_loss" ]] && PARAMS="$PARAMS --lambda_weight=$lambda_loss"
+                                        [[ -n "$pref_weight" ]] && PARAMS="$PARAMS --preference_weight=$pref_weight"
+                                    else
+                                        # For replug and mnrl, still pass them for compatibility
+                                        [[ -n "$lambda_loss" ]] && PARAMS="$PARAMS --lambda_loss=$lambda_loss"
+                                        [[ -n "$pref_weight" ]] && PARAMS="$PARAMS --preference_weight=$pref_weight"
+                                    fi
+                                    
+                                    # Common parameters for all script types
+                                    [[ -n "$weight_decay" ]] && PARAMS="$PARAMS --weight_decay=$weight_decay"
+                                    
+                                    # Add save_checkpoints if true
+                                    [[ "$SAVE_CHECKPOINTS" == "true" ]] && PARAMS="$PARAMS --save_checkpoints=true"
+                                    
+                                    # Simplified WANDB run name: <method>_<dataset>
+                                    # If custom wandb_run_name was provided, use it instead
+                                    if [[ -n "$wr" ]]; then
+                                      PARAMS="$PARAMS --wandb_run_name=$wr"
+                                    else
+                                      # Auto-generate name based on method and dataset
+                                      method_name=$(echo "$SCRIPT_TYPE" | tr '[:lower:]' '[:upper:]')
+                                      PARAMS="$PARAMS --wandb_run_name=${method_name}_${ds}"
+                                    fi
+                                    
+                                    # Add W&B project name
+                                    [[ -n "$wp" ]] && PARAMS="$PARAMS --wandb_project_name=$wp"
+                                    
+                                    [[ -n "$add_params" ]] && PARAMS="$PARAMS $add_params"
+                                    
+                                    # Create a unique job name with model info
+                                    job_id="${SCRIPT_TYPE}_${ds}_${im##*/}_${rm##*/}_lr${lr}_bs${bs}_ep${ep}"
+                                    job_id=$(echo "$job_id" | tr '/' '-')  # Replace slashes for filename safety
+                                    
+                                    echo "Submitting job: $job_id"
+                                    echo "Parameters: $PARAMS"
+                                    
+                                    #  Output file name (config params separated by underscores)
+                                    OUTPUT_DIR="output/sbatch_output"
+                                    mkdir -p "$OUTPUT_DIR"
+                                    OUTPUT_FILE="$OUTPUT_DIR/${job_id}.out"
       
-                          # Prepare sbatch command
-                          sbatch_cmd="sbatch -N 1 --gpus=$gpu_type:$gpu_count --output=$OUTPUT_FILE --error=$OUTPUT_FILE"
-                          
-                          # Only add machine parameter if specified
-                          if [[ -n "$machine" ]]; then
-                            sbatch_cmd="$sbatch_cmd -w $machine"
-                            echo "Running on: $machine with $gpu_count $gpu_type GPU(s)"
-                          else
-                            echo "Running on: any available machine with $gpu_count $gpu_type GPU(s)"
-                          fi
-                          
-                          # Add job name and script
-                          sbatch_cmd="$sbatch_cmd -J \"$job_id\" --wrap=\"$SCRIPT $PARAMS\""
-                          
-                          # Submit job with specified parameters
-                          eval $sbatch_cmd
-                          
-                          # Increment job counter
-                          ((job_count++))
-                          
-                          # Add a small delay between submissions to prevent overwhelming the scheduler
-                          sleep 0.5
+                                    # Prepare sbatch command
+                                    sbatch_cmd="sbatch -N 1 --gpus=$gpu_type:$gpu_count --output=$OUTPUT_FILE --error=$OUTPUT_FILE"
+                                    
+                                    # Only add machine parameter if specified
+                                    if [[ -n "$machine" ]]; then
+                                      sbatch_cmd="$sbatch_cmd -w $machine"
+                                      echo "Running on: $machine with $gpu_count $gpu_type GPU(s)"
+                                    else
+                                      echo "Running on: any available machine with $gpu_count $gpu_type GPU(s)"
+                                    fi
+                                    
+                                    # Add job name and script
+                                    sbatch_cmd="$sbatch_cmd -J \"$job_id\" --wrap=\"$SCRIPT $PARAMS\""
+                                    
+                                    # Submit job with specified parameters
+                                    eval $sbatch_cmd
+                                    
+                                    # Increment job counter
+                                    ((job_count++))
+                                    
+                                    # Add a small delay between submissions to prevent overwhelming the scheduler
+                                    sleep 0.5
+                                  done
+                                done
+                              done
+                            done
+                          done
                         done
                       done
                     done

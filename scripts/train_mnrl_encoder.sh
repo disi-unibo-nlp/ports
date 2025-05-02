@@ -26,6 +26,7 @@ K_EVAL_VALUES_NDCG="1 3 5 10"
 EPOCHS=1
 SAVE_CHECKPOINTS=false
 INFERENCE_MODEL="llama3-8B"  # Added but will be ignored
+WEIGHT_DECAY=0.01
 
 # Parse command-line arguments
 while [[ $# -gt 0 ]]; do
@@ -53,6 +54,12 @@ while [[ $# -gt 0 ]]; do
     --output_dir=*) OUTPUT_DIR="${1#*=}" ;;
     --save_checkpoints=*) SAVE_CHECKPOINTS="${1#*=}" ;;
     --inference_model=*) INFERENCE_MODEL="${1#*=}" ;;  # Accept but ignore this parameter
+    --weight_decay=*) WEIGHT_DECAY="${1#*=}" ;;
+    --lambda_loss=*) ;; # Accept but ignore
+    --lambda_weight=*) ;; # Accept but ignore
+    --beta=*) ;; # Accept but ignore
+    --gamma=*) ;; # Accept but ignore
+    --preference_weight=*) ;; # Accept but ignore
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
   shift
@@ -90,4 +97,5 @@ docker run \
     K_EVAL_VALUES_ACCURACY="$K_EVAL_VALUES_ACCURACY" \
     K_EVAL_VALUES_NDCG="$K_EVAL_VALUES_NDCG" \
     EPOCHS=$EPOCHS \
-    SAVE_CHECKPOINTS=$SAVE_CHECKPOINTS
+    SAVE_CHECKPOINTS=$SAVE_CHECKPOINTS \
+    WEIGHT_DECAY=$WEIGHT_DECAY

@@ -286,6 +286,7 @@ DATASET_NAME=bfcl INFERENCE_MODEL_PSEUDONAME=gemma2-2B RETRIEVAL_MODEL_NAME=Face
 | `GAMMA` | Gamma temperature | 0.5 |
 | `BETA` | Beta temperature | 0.5 |
 | `PREF_BETA` | Preference weight (ORPO beta) | 1 |
+| `WEIGHT_DECAY` | Weight decay for optimizer | 0.01 |
 | `CORPUS_UPDATES` | Steps between corpus re-embedding | 100 |
 | `SAVE_STRATEGY` | Model saving strategy | epoch |
 | `SAVE_STEPS` | Steps between model saves | None |
@@ -383,6 +384,12 @@ The `run_sbatch.sh` script provides a flexible way to launch multiple training j
 - `--dataset=<names>`: Dataset names (e.g., "toolbench,apibench")
 - `--wandb_run_name=<name>`: Base name for W&B runs (auto-generated if not provided)
 - `--wandb_project_name=<name>`: W&B project name (default: "PORTS_AAAI-EMNLP")
+- `--beta=<values>`: Beta temperature for Q distribution softmax (default: 1.0)
+- `--gamma=<values>`: Gamma temperature for Pr_retr distribution softmax (default: 1.0)
+- `--lambda_loss=<values>`: Weight for the preference loss term (default: 0.2)
+- `--preference_weight=<values>`: Beta parameter for odds ratio preference loss (default: 0.1)
+- `--weight_decay=<values>`: Weight decay for the optimizer (default: 0.01)
+- `--inference_max_seq_len=<values>`: Maximum sequence length for inference model (default: 1024)
 - `--params="<extra_params>"`: Additional parameters to pass to the training script
 
 #### Using Additional Parameters
@@ -404,48 +411,52 @@ You can pass any additional parameters not covered by the standard options using
 
 This will launch 12 jobs (3 learning rates × 2 batch sizes × 2 epoch counts) with all combinations.
 
-#### Multi-Machine Distributed Search:
+#### Grid Search with Temperature Parameters:
 ```bash
-./run_sbatch.sh --script=mnrl --machine=deeplearn2,faretra --lr=1e-5,1e-4 \
-  --batch_size=2,4 --dataset=apibench,toolbench
+./run_sbatch.sh --script=ports --dataset=toolbench \
+  --beta=0.5,1.0,2.0 --gamma=0.5,1.0,2.0 --inference_model=llama3-8B
 ```
 
-This will distribute 8 jobs across the specified machines.
+This will create 9 jobs with different beta and gamma temperature combinations.
 
-#### Model Grid Search:
+#### Model Grid Search with Loss Parameters:
 ```bash
 ./run_sbatch.sh --script=ports \
-  --retrieval_model=BAAI/bge-base-en-v1.5,FacebookAI/roberta-base \
-  --inference_model=llama3-8B,gemma2-2B \
-  --dataset=toolbench
+  --epochs=1 \
+  --wandb_project_name=PORTS_EMNLP \
+  --retrieval_model=FacebookAI/roberta-base \
+  --lr=2e-5 \
+  --inference_model=qwen3 \
+  --dataset=toolbench_3 \
+  --lambda_loss=0.2,0.3 \
+  --preference_weight=0.1,0.2 \
+  --beta=0.2,0.5,0.7 \
+  --gamma=0.2,0.5,0.7 \
+  --weight_decay 0.01,0.1 \
+  --params="--max_train_samples=2000 --eval_steps 0.2 --warmup_ratio 0.1 --n_reembedding_steps=50"
 ```
 
-This will create 4 jobs testing all combinations of retrieval and inference models.
+This will create 16 jobs testing combinations of models and loss parameters.
 
-#### Advanced Usage with Custom Parameters:
+#### Weight Decay Optimization:
 ```bash
-# Adding additional model-specific parameters
-./run_sbatch.sh --script=ports --lr=1e-5 --batch_size=2 --machine=faretra --dataset=toolbench_3 --retrieval_model=answerdotai/ModernBERT-base \
-  --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=32 --eval_steps=0.25 --inference_model=qwen3"
-
-# Using different evaluation metrics
-./run_sbatch.sh --script=mnrl --dataset=toolbench \
-  --retrieval_model=BAAI/bge-base-en-v1.5,FacebookAI/roberta-base \
-  --params="--k_eval_values_accuracy=\"1 3 5 10\" --k_eval_values_ndcg=\"1 3 5 10\""
-
-# Setting model-specific parameters with different learning rates
-./run_sbatch.sh --script=replug --lr=1e-5,1e-4 \
-  --inference_model=llama3-8B,gemma2-2B \
-  --params="--num_retrieved_docs=5 --corpus_updates=10 --use_4bit=false"
+./run_sbatch.sh --script=ports --dataset=toolbench \
+  --weight_decay=0.005,0.01,0.05 --lr=1e-5,5e-5
 ```
 
-Run over all datasets
+This will create 27 jobs exploring different temperature and preference weight settings.
+
+#### Weight Decay Optimization:
 ```bash
 ./run_sbatch.sh --script=ports --lr=2e-5 --retrieval_model=BAAI/bge-base-en-v1.5,FacebookAI/roberta-base --batch_size=2 --epochs=1 --wandb_project_name=PORTS_EMNLP --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap
 
-./run_sbatch.sh --script=mnrl --lr=2e-5,1e-4 --retrieval_model=BAAI/bge-base-en-v1.5,FacebookAI/roberta-base --batch_size=2 --epochs=1 --wandb_project_name=PORTS_EMNLP --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap
+./run_sbatch.sh --script=mnrl --lr=2e-5,1e-4 --retrieval_model=BAAI/bge-base-en-v1.5,FacebookAI/roberta-base --batch_size=4 --epochs=1 --wandb_project_name=PORTS_EMNLP --dataset=toolbench_1,toolbench_2,toolbench_3
 
-./run_sbatch.sh --script=replug --lr=2e-5 --retrieval_model=FacebookAI/roberta-base --batch_size=2 --epochs=1 --wandb_project_name=PORTS_EMNLP --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap
+./run_sbatch.sh --script=ports --lr=2e-5 --retrieval_model=answerdotai/ModernBERT-base,BAAI/bge-base-en-v1.5 --batch_size=4 --epochs=1 --wandb_project_name=PORTS_EMNLP --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=32 --eval_steps=0.25 --inference_model=qwen3"
+
+./run_sbatch.sh --script=ports --lr=2e-5 --retrieval_model=answerdotai/ModernBERT-base,BAAI/bge-base-en-v1.5 --batch_size=4 --epochs=1 --wandb_project_name=PORTS_EMNLP --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=32 --eval_steps=0.25 --inference_model=gemma3"
+
+./run_sbatch.sh --script=ports --lr=2e-5 --retrieval_model=answerdotai/ModernBERT-base,BAAI/bge-base-en-v1.5 --batch_size=4 --epochs=1 --wandb_project_name=PORTS_EMNLP --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=32 --eval_steps=0.25 --inference_model=llama3.2"
 ```
 
 ### Common Additional Parameters
@@ -454,30 +465,25 @@ Here are some useful additional parameters by script type:
 
 **PORTS:**
 - `--lambda_weight=<float>`: Weight for the lambda loss component
-- `--pref_beta=<float>`: Preference weight in ORPO
+- `--preference_weight=<float>`: Preference weight in ORPO
+- `--beta=<float>`: Temperature parameter for Q distribution
+- `--gamma=<float>`: Temperature parameter for retrieval probabilities
+- `--weight_decay=<float>`: Weight decay for optimizer
 - `--n_negs=<int>`: Number of negative samples
 - `--corpus_updates=<int>`: Steps between corpus re-embedding
 
 **RePlug:**
+- `--beta=<float>`: Beta temperature parameter
+- `--gamma=<float>`: Gamma temperature parameter
+- `--weight_decay=<float>`: Weight decay for optimizer
 - `--num_retrieved_docs=<int>`: Number of documents to retrieve
 - `--use_4bit=<bool>`: Whether to use 4-bit quantization
 
 **MNRL:**
+- `--weight_decay=<float>`: Weight decay for optimizer
 - `--pooling=<str>`: Embedding pooling strategy (cls, mean)
 - `--negatives_per_sample=<int>`: Number of negatives per sample
 - `--log_freq=<int>`: Logging frequency
-
-### Under the Hood
-
-The script will:
-1. Parse all command-line arguments and convert comma-separated values into arrays
-2. Determine the correct training script based on the `--script` parameter
-3. Generate all possible combinations of the provided parameter arrays
-4. Submit individual sbatch jobs for each combination
-5. Generate unique job names and W&B run names for easy tracking
-6. Display a summary of all submitted jobs
-
-This approach enables efficient hyperparameter tuning and experimentation across multiple compute resources.
 
 ## Unsloth Integration
 

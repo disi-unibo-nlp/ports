@@ -34,6 +34,7 @@ K_EVAL_VALUES_ACCURACY="1 3 5 10 20"
 K_EVAL_VALUES_NDCG="1 3 5 10 20"
 MAX_TRAIN_SAMPLES=10000
 SAVE_CHECKPOINTS=false
+WEIGHT_DECAY=0.01
 
 # Parse command-line arguments
 while [[ $# -gt 0 ]]; do
@@ -47,13 +48,15 @@ while [[ $# -gt 0 ]]; do
     --n_negs=*) N_NEGS="${1#*=}" ;;
     --eval_batch_size=*) EVAL_BATCH_SIZE="${1#*=}" ;;
     --preprocess_batch_size=*) PREPROCESS_BATCH_SIZE="${1#*=}" ;;
-    --lambda_weight=*) LAMBDA_WEIGHT="${1#*=}" ;;
+    --lambda_loss=*) LAMBDA_WEIGHT="${1#*=}" ;;
+    --lambda_weight=*) LAMBDA_WEIGHT="${1#*=}" ;; # Add this for dual compatibility
     --wandb_project_name=*) WANDB_PROJECT_NAME="${1#*=}" ;;
     --wandb_run_name=*) WANDB_RUN_NAME="${1#*=}" ;;
     --log_freq=*) LOG_FREQ="${1#*=}" ;;
     --beta=*) BETA="${1#*=}" ;;
     --gamma=*) GAMMA="${1#*=}" ;;
     --pref_beta=*) PREF_BETA="${1#*=}" ;;
+    --preference_weight=*) PREF_BETA="${1#*=}" ;; # Add this for dual compatibility
     --corpus_updates=*) CORPUS_UPDATES="${1#*=}" ;;
     --epochs=*) EPOCHS="${1#*=}" ;;
     --batch_size=*) BATCH_SIZE="${1#*=}" ;;
@@ -69,6 +72,7 @@ while [[ $# -gt 0 ]]; do
     --max_train_samples=*) MAX_TRAIN_SAMPLES="${1#*=}" ;;
     --output_dir=*) OUTPUT_DIR="${1#*=}" ;;
     --save_checkpoints=*) SAVE_CHECKPOINTS="${1#*=}" ;;
+    --weight_decay=*) WEIGHT_DECAY="${1#*=}" ;; # Add weight decay parameter
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
   shift
@@ -113,4 +117,5 @@ docker run \
     K_EVAL_VALUES_ACCURACY="$K_EVAL_VALUES_ACCURACY" \
     K_EVAL_VALUES_NDCG="$K_EVAL_VALUES_NDCG" \
     MAX_TRAIN_SAMPLES=$MAX_TRAIN_SAMPLES \
-    SAVE_CHECKPOINTS=$SAVE_CHECKPOINTS
+    SAVE_CHECKPOINTS=$SAVE_CHECKPOINTS \
+    WEIGHT_DECAY=$WEIGHT_DECAY
