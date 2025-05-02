@@ -434,6 +434,16 @@ This will create 9 jobs with different beta and gamma temperature combinations.
   --gamma=0.2,0.5,0.7 \
   --weight_decay=0.01 \
   --params="--max_train_samples=2000 --eval_steps=0.2 --warmup_ratio=0.1 --corpus_updates=50"
+
+  ./run_sbatch.sh --script=replug \
+  --epochs=1 \
+  --wandb_project_name=PORTS_EMNLP \
+  --retrieval_model=FacebookAI/roberta-base \
+  --lr=2e-5 \
+  --inference_model=qwen3 \
+  --dataset=toolbench_3 \
+  --weight_decay=0.01 \
+  --params="--max_train_samples=2000 --eval_steps=0.2 --warmup_ratio=0.1 --corpus_updates=50"
 ```
 
 This will create 16 jobs testing combinations of models and loss parameters.
