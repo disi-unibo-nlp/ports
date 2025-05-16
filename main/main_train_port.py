@@ -1179,6 +1179,11 @@ def main():
     dataset_downloader = DatasetDownloader(dataset_name=args.dataset)
     dataset = dataset_downloader.get_dataset() # Load raw dataset
 
+
+    print("********************")
+    print(dataset)
+    print("********************")
+
     # --- Handle Multi-API Datasets (Special Case) ---
     if args.dataset in ["apibench", "toolbench"]:
         logger.info(f"Processing multi-API setup for dataset: {args.dataset}")

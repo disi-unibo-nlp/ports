@@ -51,7 +51,7 @@ CORPUS_UPDATES ?= 5
 PREPROCESS_BATCH_SIZE ?= 16
 
 # MNRL specific parameters
-SCHEDULER ?= warmupcosine
+SCHEDULER ?= cosine
 POOLING ?= mean
 NEGATIVES_PER_SAMPLE ?= 1
 MNRL_OUTPUT_DIR ?= $(OUTPUT_DIR)/mnrl/mnrl_retriever_$(DATASET)_$(shell basename $(RETRIEVAL_MODEL))_$(shell date +%Y%m%d_%H%M%S)
@@ -89,6 +89,7 @@ help:
 	@echo "  replug          - Run RePlug training"
 	@echo "  mnrl            - Run MNRL training"
 	@echo "  docker          - Run interactive Docker container"
+	@echo "  docker-build    - Build Docker image"
 	@echo "  docker-cmd      - Run specific command in Docker container"
 	@echo "  clean           - Clean output directories"
 	@echo ""
@@ -224,6 +225,12 @@ mnrl:
 docker:
 	@echo "Starting interactive Docker container..."
 	$(SCRIPTS_DIR)/docker_run.sh
+
+.PHONY: docker-build
+docker-build:
+	@echo "Building Docker image: ports_image..."
+	docker build -t ports_image -f build/Dockerfile .
+	@echo "Docker image built successfully."
 
 .PHONY: docker-cmd
 docker-cmd:

@@ -462,11 +462,20 @@ This will create 27 jobs exploring different temperature and preference weight s
 
 ./run_sbatch.sh --script=mnrl --lr=2e-5,1e-4 --retrieval_model=BAAI/bge-base-en-v1.5,FacebookAI/roberta-base --batch_size=4 --epochs=1 --wandb_project_name=PORTS_EMNLP --dataset=toolbench_1,toolbench_2,toolbench_3
 
-./run_sbatch.sh --script=ports --lr=2e-5 --retrieval_model=answerdotai/ModernBERT-base,BAAI/bge-base-en-v1.5 --batch_size=4 --epochs=1 --wandb_project_name=PORTS_EMNLP --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=32 --eval_steps=0.25 --inference_model=qwen3"
+./run_sbatch.sh --script=ports --lr=2e-5 --retrieval_model=answerdotai/ModernBERT-base,BAAI/bge-base-en-v1.5 --batch_size=4 --epochs=1 --wandb_project_name=PORTS_EMNLP --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=32 --eval_steps=0.25 --inference_model=qwen3
 
-./run_sbatch.sh --script=ports --lr=2e-5 --retrieval_model=answerdotai/ModernBERT-base,BAAI/bge-base-en-v1.5 --batch_size=4 --epochs=1 --wandb_project_name=PORTS_EMNLP --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=32 --eval_steps=0.25 --inference_model=gemma3"
 
-./run_sbatch.sh --script=ports --lr=2e-5 --retrieval_model=answerdotai/ModernBERT-base,BAAI/bge-base-en-v1.5 --batch_size=4 --epochs=1 --wandb_project_name=PORTS_EMNLP --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=32 --eval_steps=0.25 --inference_model=llama3.2"
+
+
+
+./run_sbatch.sh --script=ports --lr=2e-5 --retrieval_model=answerdotai/ModernBERT-base --batch_size=4 --epochs=1 --wandb_project_name=PORTS_Hub --dataset=bfcl --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=32  max_train_samples=20000--eval_steps=0.25 --inference_model=llama3.2 --n_reembedding_steps=400"
+
+
+
+
+./run_sbatch.sh --script=ports --lr=2e-5 --retrieval_model=answerdotai/ModernBERT-base,BAAI/bge-base-en-v1.5 --batch_size=4 --epochs=1 --wandb_project_name=PORTS_Hub --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=32 --eval_steps=0.25 --inference_model=llama3.2 --n_reembedding_steps=400"
+
+
 ```
 
 ### Common Additional Parameters

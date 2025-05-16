@@ -316,6 +316,13 @@ class DatasetDownloader():
             print(f"Loading {self.data_path} - {self.data_sub_split}")
             ds = load_dataset(self.data_path, self.data_sub_split)
 
+
+        print("******** INTERNAL DEBUG INFO ********")
+        print(f"Dataset name: {self.dataset_name}")
+        print(f"Dataset path: {self.data_path}")
+        print(ds)
+        print("************************************")
+
         if "toolbench" in self.dataset_name:
             split_group = f"G{self.dataset_name.split('_')[-1]}"
             for split in ds:
