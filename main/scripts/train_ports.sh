@@ -23,6 +23,7 @@ BETA="${BETA:-0.5}"
 GAMMA="${GAMMA:-0.5}"
 PREF_BETA="${PREF_BETA:-1}"
 CORPUS_UPDATES="${CORPUS_UPDATES:-100}"
+EMBEDDING_UPDATE_STEPS="${EMBEDDING_UPDATE_STEPS:-}"
 N_EPOCHS="${N_EPOCHS:-5}"
 SEED="${SEED:-42}"
 EVAL_STEPS="${EVAL_STEPS:-0.2}"
@@ -50,6 +51,10 @@ MAX_CHECKPOINTS_ARGS=""
 if [ -n "$MAX_CHECKPOINTS" ]; then
   MAX_CHECKPOINTS_ARGS="--max_checkpoints $MAX_CHECKPOINTS"
 fi
+EMBEDDING_UPDATE_STEPS_ARGS=""
+if [ -n "$EMBEDDING_UPDATE_STEPS" ]; then
+  EMBEDDING_UPDATE_STEPS_ARGS="--embedding_update_steps $EMBEDDING_UPDATE_STEPS"
+fi
 
 PYTHON_SCRIPT="/workspace/main/main_train_port.py"
 
@@ -66,6 +71,7 @@ python3 $PYTHON_SCRIPT \
     --eval_batch_size $EVAL_BATCH_SIZE \
     --preprocessing_batch_size $PREPROCESS_BATCH_SIZE \
     --n_reembedding_steps $CORPUS_UPDATES \
+    $EMBEDDING_UPDATE_STEPS_ARGS \
     --padding_side $PADDING_SIDE \
     --lambda_loss $LAMBDA_WEIGHT \
     --n_neg_examples $N_NEGS \

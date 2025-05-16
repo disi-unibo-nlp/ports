@@ -489,6 +489,7 @@ def train(dataset: Dataset,
            eval_strategy: str = "epoch",
            eval_steps: float = None,
            n_reembedding_steps: int = None,
+           embedding_update_steps: int = None,
            prompt_template: str = "",
            instruction_prompt: str = "", # Note: This param seems unused here, consider removing if not needed
            lambda_loss: float = 0.2,
@@ -538,6 +539,7 @@ def train(dataset: Dataset,
                                       after which to evaluate (0.0 < steps <= 1.0). Defaults to None.
         n_reembedding_steps (int, optional): Number of sub-splits of the training data. If set,
                                              corpus embeddings are recomputed for each split. Defaults to None (no re-splitting).
+        embedding_update_steps (int, optional): Number of steps after which to update corpus embeddings. If specified, overrides n_reembedding_steps. Defaults to None.
         prompt_template (str, optional): The template string used to format prompts for the inference model. Defaults to "".
         instruction_prompt (str, optional): An instruction string prepended to prompts (unused). Defaults to "".
         lambda_loss (float, optional): Weighting factor for the preference loss term. Defaults to 0.2.
@@ -581,7 +583,7 @@ def train(dataset: Dataset,
         "inference_max_seq_length" : inference_max_seq_length,
         "epochs" : num_epochs,
         "dataset" : dataset_name,
-        "embedding_update_steps" : len(dataset["train"]) // n_reembedding_steps if n_reembedding_steps else "N/A",
+        "embedding_update_steps": embedding_update_steps if embedding_update_steps is not None else (len(dataset["train"]) // n_reembedding_steps if n_reembedding_steps else "N/A"),
         "train_data_samples" : len(dataset["train"]),
         "preference_weight": preference_weight,
         "num_neg_examples": number_of_neg_examples,
@@ -1079,6 +1081,7 @@ def main():
     parser.add_argument('--do_eval', action='store_true', default=False,  help="Whether to run the evaluation loop (evaluation is integrated into training).") # Consider if needed
     parser.add_argument('--n_epochs', type=int, default=10, help="Number of training epochs.")
     parser.add_argument('--n_reembedding_steps', type=int, default=None, help="Number of data splits per epoch for potential corpus re-embedding (if applicable in dataloader). Default: None (no splitting).")
+    parser.add_argument('--embedding_update_steps', type=int, default=None, help="Number of steps after which to update corpus embeddings. If specified, overrides n_reembedding_steps. Default: None.")
 
     # --- Evaluation Args ---
     parser.add_argument('--eval_strategy', type=str, default="epoch", choices=["epoch", "steps"], help="Strategy for running evaluation during training ('epoch' or 'steps').")
@@ -1160,7 +1163,7 @@ def main():
         logger.info(f"Inference tokenizer pad_token_id set to: {infer_tokenizer.pad_token_id}")
 
     infer_tokenizer.padding_side = args.padding_side
-    logger.info(f"Inference tokenizer padding side set to: {infer_tokenizer.padding_side}")
+    logger.info(f"Inference tokenizer padding side set to: {args.padding_side}")
 
     # --- Retrieval Tokenizer ---
     if retr_tokenizer.pad_token is None:
@@ -1172,7 +1175,7 @@ def main():
         logger.info(f"Retrieval tokenizer pad_token_id set to: {retr_tokenizer.pad_token_id}")
 
     retr_tokenizer.padding_side = args.padding_side
-    logger.info(f"Retrieval tokenizer padding side set to: {retr_tokenizer.padding_side}")
+    logger.info(f"Retrieval tokenizer padding side set to: {args.padding_side}")
 
     # ******************** Load and Prepare Dataset ********************
     logger.info(f"Loading dataset: {args.dataset}")
@@ -1251,6 +1254,17 @@ def main():
     )
 
     # ******************** Prepare Training Arguments ********************
+    # Calculate n_reembedding_steps based on embedding_update_steps if provided
+    if args.embedding_update_steps is not None:
+        # If embedding_update_steps is provided, override n_reembedding_steps
+        n_reembedding_steps_calculated = len(dataset["train"]) // args.embedding_update_steps if args.embedding_update_steps > 0 else None
+        if n_reembedding_steps_calculated == 0:  # Ensure at least 1 split if dataset is smaller than update_steps
+            n_reembedding_steps_calculated = 1
+        logger.info(f"Overriding n_reembedding_steps ({args.n_reembedding_steps}) with calculated value ({n_reembedding_steps_calculated}) based on embedding_update_steps={args.embedding_update_steps}")
+        effective_n_reembedding_steps = n_reembedding_steps_calculated
+    else:
+        effective_n_reembedding_steps = args.n_reembedding_steps
+        
     train_eval_config = {
         "dataset" : dataset,
         "dataset_name" : args.dataset,
@@ -1263,7 +1277,8 @@ def main():
         "data_collator_completion" : data_collator_completion,
         "eval_strategy" : args.eval_strategy,
         "eval_steps" : args.eval_steps,
-        "n_reembedding_steps" : args.n_reembedding_steps,
+        "n_reembedding_steps" : effective_n_reembedding_steps,
+        "embedding_update_steps": args.embedding_update_steps,
         "prompt_template" : prompt_template_str,
         "instruction_prompt" : instruction,
         "lambda_loss" : args.lambda_loss,

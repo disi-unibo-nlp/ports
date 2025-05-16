@@ -473,7 +473,7 @@ This will create 27 jobs exploring different temperature and preference weight s
 
 
 
-./run_sbatch.sh --script=ports --lr=2e-5 --retrieval_model=answerdotai/ModernBERT-base,BAAI/bge-base-en-v1.5 --batch_size=4 --epochs=1 --wandb_project_name=PORTS_Hub --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=32 --eval_steps=0.25 --inference_model=llama3.2 --n_reembedding_steps=400"
+./run_sbatch.sh --script=ports --lr=2e-5 --retrieval_model=answerdotai/ModernBERT-base,BAAI/bge-m3 --inference_model=qwen3,llama3.2,gemma3 --batch_size=4 --epochs=1 --wandb_project_name=PORTS_Hub --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=32 --eval_steps=0.25 --embedding_update_steps=50"
 
 
 ```
