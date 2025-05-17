@@ -34,6 +34,7 @@ import os
 import wandb
 from tqdm import tqdm
 from dotenv import load_dotenv
+import math
 
 # Set up environment
 load_dotenv()

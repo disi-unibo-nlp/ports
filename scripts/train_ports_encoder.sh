@@ -35,6 +35,7 @@ K_EVAL_VALUES_NDCG="1 3 5 10 20"
 MAX_TRAIN_SAMPLES=10000
 SAVE_CHECKPOINTS=false
 WEIGHT_DECAY=0.01
+EMBEDDING_UPDATE_STEPS=50
 
 # Parse command-line arguments
 while [[ $# -gt 0 ]]; do
@@ -72,7 +73,8 @@ while [[ $# -gt 0 ]]; do
     --max_train_samples=*) MAX_TRAIN_SAMPLES="${1#*=}" ;;
     --output_dir=*) OUTPUT_DIR="${1#*=}" ;;
     --save_checkpoints=*) SAVE_CHECKPOINTS="${1#*=}" ;;
-    --weight_decay=*) WEIGHT_DECAY="${1#*=}" ;; # Add weight decay parameter
+    --weight_decay=*) WEIGHT_DECAY="${1#*=}" ;;
+    --embedding_update_steps=*) EMBEDDING_UPDATE_STEPS="${1#*=}" ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
   shift
