@@ -59,6 +59,7 @@ while [[ $# -gt 0 ]]; do
     --lambda_weight=*) ;; # Accept but ignore
     --beta=*) ;; # Accept but ignore
     --gamma=*) ;; # Accept but ignore
+    --inference_max_seq_len=*) ;; # Accept but ignore
     --preference_weight=*) ;; # Accept but ignore
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
