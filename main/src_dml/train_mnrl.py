@@ -698,7 +698,7 @@ if __name__ == '__main__':
 
     parser.add_argument("--disable_wandb", action="store_true",
                         help="Disable Weights & Biases logging")
-    parser.add_argument("--push_to_hub", action="store_true",
+    parser.add_argument("--push_to_hub", action="store_true",default=False,
                         help="Push trained model to Hugging Face Hub")
     parser.add_argument("--hub_repo_name", type=str, default=None,
                         help="Repository name for Hugging Face Hub (optional)")

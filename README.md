@@ -476,7 +476,7 @@ This will create 27 jobs exploring different temperature and preference weight s
    --epochs=2 \
    --wandb_project_name=PORTS_Hub \
    --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap \
-   --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=32 --eval_steps=0.25 --embedding_update_steps=50 --max_train_samples 10000"
+   --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=32 --eval_steps=0.25 --embedding_update_steps=50 --max_train_samples=10000"
 
 ./run_sbatch.sh --script="mnrl" \
    --lr=1e-4 \

@@ -55,7 +55,7 @@ case $INFERENCE_MODEL_PSEUDONAME in
     INFERENCE_MODEL_TYPE="llama3"
     ;;
   "gemma3")
-    INFERENCE_MODEL_NAME="google/gemma-3-4b-it"
+    INFERENCE_MODEL_NAME="google/gemma-3-1b-it"
     INFERENCE_MODEL_TYPE="gemma3"
     ;;
   "qwen3")

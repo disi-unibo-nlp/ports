@@ -38,7 +38,7 @@ pseudo_name_mapping = {
     'gemma2-2B' : "google/gemma-2-2b-it",
     'groqLlama3Tool-8B' : "Groq/Llama-3-Groq-8B-Tool-Use",
     'groqLlama3Tool-8B' : "Groq/Llama-3-Groq-8B-Tool-Use",
-    "gemma3" : "google/gemma-3-4b-it",
+    "gemma3" : "google/gemma-3-1b-it",
     "qwen3" : "Qwen/Qwen3-4B",
     "llama3.2" : "meta-llama/Llama-3.2-3B-Instruct"
 }
