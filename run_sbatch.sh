@@ -223,7 +223,7 @@ for machine in "${DEST_MACHINE[@]}"; do
                                     echo "Parameters: $PARAMS"
                                     
                                     #  Output file name (config params separated by underscores)
-                                    OUTPUT_DIR="output/sbatch_output"
+                                    OUTPUT_DIR="output/sbatch_output_new"
                                     mkdir -p "$OUTPUT_DIR"
                                     OUTPUT_FILE="$OUTPUT_DIR/${job_id}.out"
       

@@ -26,7 +26,7 @@ SAVE_PATH="${SAVE_PATH:-${HOME}/ports/main/output/replug/replug_retriever_${DATA
 K_EVAL_VALUES_ACCURACY="${K_EVAL_VALUES_ACCURACY:-1 3 5}"
 K_EVAL_VALUES_NDCG="${K_EVAL_VALUES_NDCG:-1 3 5}"
 # Updated parameter for corpus embedding updates
-CORPUS_UPDATES="${CORPUS_UPDATES:-5}"
+CORPUS_UPDATES="${CORPUS_UPDATES:-50}"
 PREPROCESS_BATCH_SIZE="${PREPROCESS_BATCH_SIZE:-16}"
 
 # Add save_checkpoints parameter
