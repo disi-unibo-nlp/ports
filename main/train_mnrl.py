@@ -90,7 +90,7 @@ def create_api_triplets(dataset_split,
     # First, build a mapping of queries to their positive API descriptions
     query_to_positives = {}
     for row in dataset_split:
-        query = row.get("query")
+        query = row.get("query_for_retrieval")
         positive_api = row.get("api_description")
         
         if query and positive_api:
@@ -102,7 +102,7 @@ def create_api_triplets(dataset_split,
     logger.info(f"Creating triplets from dataset ({len(dataset_split)} examples)")
     
     for row in tqdm(dataset_split, desc="Creating triplets", mininterval=2.0):
-        query = row.get("query")
+        query = row.get("query_for_retrieval")
         positive_api = row.get("api_description")
 
         if not query or not positive_api:
@@ -430,39 +430,62 @@ def main(args):
 
         logger.info(f"Dataset '{args.dataset}' loaded: {list(dataset.keys())}")
 
+        logger.info("Creating API corpora...")
         required_field = 'api_description'
         if required_field not in dataset[train_split_name].column_names:
             raise ValueError(f"Required field '{required_field}' not found in train split.")
         if required_field not in dataset[dev_split_name].column_names:
             raise ValueError(f"Required field '{required_field}' not found in dev split '{dev_split_name}'.")
 
+        # Define train API corpus from training split
         train_api_corpus = list(set(dataset[train_split_name][required_field]))
-        eval_corpus_set = set(dataset[dev_split_name][required_field])
+        logger.info(f"Train API corpus size: {len(train_api_corpus)}")
+
+        # Define dev API corpus strictly from development split (for initial evaluation)
+        dev_api_corpus = list(set(dataset[dev_split_name][required_field]))
+        logger.info(f"Development API corpus size: {len(dev_api_corpus)}")
+
+        # For test evaluation, create a combined corpus of train + test APIs
+        test_api_corpus = []
+        combined_test_eval_corpus = []
+        
         if args.evaluate_on_test:
             if required_field not in dataset[test_split_name].column_names:
                 raise ValueError(f"Required field '{required_field}' not found in test split '{test_split_name}'.")
-            eval_corpus_set.update(dataset[test_split_name][required_field])
-        eval_api_corpus = list(eval_corpus_set)
+            
+            # Extract APIs strictly from the test split
+            test_api_corpus = list(set(dataset[test_split_name][required_field]))
+            logger.info(f"Test API corpus size: {len(test_api_corpus)}")
+            
+            # Create combined corpus for final test evaluation (train + test)
+            combined_test_eval_corpus = list(set(train_api_corpus) | set(test_api_corpus))
+            logger.info(f"Combined test evaluation corpus size (train + test): {len(combined_test_eval_corpus)}")
 
-        logger.info(f"Created corpora - Train: {len(train_api_corpus)}, Eval: {len(eval_api_corpus)}")
+        # Create dev triplets using only dev APIs for the corpus
+        logger.info("Creating dev triplets...")
+        dev_triplets = create_api_triplets(dataset[dev_split_name],
+                                           dev_api_corpus,
+                                           args.negatives_per_sample,
+                                           args.random_negatives)
+        logger.info(f"Dev triplets: {len(dev_triplets)}")
 
+        # Create train triplets using train API corpus
+        logger.info("Creating train triplets...")
         train_triplets = create_api_triplets(dataset[train_split_name],
                                              train_api_corpus,
                                              args.negatives_per_sample,
                                              args.random_negatives)
-        dev_triplets = create_api_triplets(dataset[dev_split_name],
-                                           eval_api_corpus,
-                                           args.negatives_per_sample,
-                                           args.random_negatives)
+        logger.info(f"Train triplets: {len(train_triplets)}")
 
+        # Create test triplets using combined corpus for negative sampling
         test_triplets = []
         if args.evaluate_on_test:
+            logger.info("Creating test triplets with combined evaluation corpus...")
             test_triplets = create_api_triplets(dataset[test_split_name],
-                                                eval_api_corpus,
+                                                combined_test_eval_corpus,
                                                 args.negatives_per_sample,
                                                 args.random_negatives)
-
-        logger.info(f"Train triplets: {len(train_triplets)}, Dev triplets: {len(dev_triplets)}")
+            logger.info(f"Test triplets: {len(test_triplets)}")
 
         if not train_triplets:
             logger.error("No training triplets were generated. Cannot proceed.")
@@ -478,10 +501,11 @@ def main(args):
         k_values_accuracy = getattr(args, 'k_eval_values_accuracy', [1, 3, 5, 10])
         k_values_ndcg = getattr(args, 'k_eval_values_ndcg', [1, 3, 5, 10])
 
-        if dev_triplets and eval_api_corpus:
+        # For initial evaluation, use the dev API corpus
+        if dev_triplets and dev_api_corpus:
             try:
                 ir_evaluator = create_api_evaluator(dev_triplets,
-                                                    eval_api_corpus,
+                                                    dev_api_corpus,
                                                     batch_size=args.eval_batch_size,
                                                     name='dev',
                                                     k_values_accuracy=k_values_accuracy,
@@ -613,28 +637,38 @@ def main(args):
                 wandb_run = None
 
         if args.evaluate_on_test and test_triplets:
+            logger.info("Evaluating model on test set...")
+
             eval_model = None
             if args.do_eval_only and os.path.isdir(args.model_name):
+                logger.info(f"Loading model from {args.model_name} for test evaluation")
                 try:
                     eval_model = SentenceTransformer(args.model_name, device=device)
                 except Exception as e:
+                    logger.error(f"Error loading model for test evaluation: {e}")
+                    logger.error(traceback.format_exc())
                     eval_model = None
             elif not args.do_eval_only:
                 best_model_path = model_save_path
                 if os.path.exists(best_model_path):
+                    logger.info(f"Loading best model from {best_model_path} for test evaluation")
                     try:
                         eval_model = SentenceTransformer(best_model_path, device=device)
                     except Exception as e:
+                        logger.warning(f"Error loading best model from {best_model_path}, using final model instead: {e}")
                         eval_model = model
                 else:
+                    logger.warning(f"Best model path {best_model_path} not found, using final model.")
                     eval_model = model
             else:
+                logger.error(f"Evaluation only requested, but model_name '{args.model_name}' is not a valid directory path.")
                 eval_model = None
 
             if eval_model:
+                # For final test evaluation, use the combined corpus (train + test APIs)
                 test_stats = evaluate_on_test(eval_model, 
                                               test_triplets, 
-                                              eval_api_corpus, 
+                                              combined_test_eval_corpus,  # Use combined corpus of train + test APIs
                                               model_save_path, 
                                               batch_size=args.eval_batch_size,
                                               k_values_accuracy=k_values_accuracy,
