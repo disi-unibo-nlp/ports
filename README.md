@@ -488,8 +488,8 @@ This will create 27 jobs exploring different temperature and preference weight s
 
 
 ./run_sbatch.sh --script="replug" \
-  --epochs=2 \
-  --wandb_project_name=PORTS_Hub \
+  --epochs=1 \
+  --wandb_project_name=PORTS_Hub_Replug \
   --retrieval_model=answerdotai/ModernBERT-base,BAAI/bge-m3 \
   --lr=2e-5 \
   --inference_model=qwen3,llama3.2,gemma3 \
