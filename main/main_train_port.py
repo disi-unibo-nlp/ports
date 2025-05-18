@@ -517,7 +517,9 @@ def train(dataset: Dataset,
            save_dir: str = "./checkpoints",
            max_checkpoints: int = None,
            weight_decay: float = 0.01,
-           save_checkpoints: bool = False):
+           save_checkpoints: bool = False,
+           infer_model_name: str = "gpt2",
+           retr_model_name: str = "roberta-base"):
     """
     Main training loop for the PORT model.
 
@@ -592,10 +594,12 @@ def train(dataset: Dataset,
         "save_steps": save_steps,
         "eval_strategy": eval_strategy,
         "eval_steps": eval_steps,
-        "save_checkpoints": save_checkpoints
+        "save_checkpoints": save_checkpoints,
+        "inference_model_name": infer_model_name,
+        "retr_model_name": retr_model_name
     }
 
-    run_name = wandb_run_name or f"PORTS-{dataset_name}-{num_epochs}ep"
+    run_name = wandb_run_name or f"PORTS-{dataset_name}-{infer_model_name}-{retr_model_name}-{num_epochs}ep"
     logger.info(f"Initializing W&B with project '{wandb_project_name}', run name: {run_name}")
     wandb.init(project=wandb_project_name, name=run_name)
     wandb.config.update(config)
@@ -1306,7 +1310,9 @@ def main():
         "save_steps": args.save_steps,
         "save_dir": args.save_dir,
         "max_checkpoints": args.max_checkpoints,
-        "save_checkpoints": args.save_checkpoints
+        "save_checkpoints": args.save_checkpoints,
+        "infer_model_name": pseudo_model_name,
+        "retr_model_name": retr_model_name,
     }
 
     logger.info("Starting Training and Evaluation Process...")

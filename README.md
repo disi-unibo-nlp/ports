@@ -483,7 +483,7 @@ This will create 27 jobs exploring different temperature and preference weight s
    --retrieval_model=answerdotai/ModernBERT-base,BAAI/bge-m3 \
    --batch_size=4 \
    --epochs=2 \
-   --wandb_project_name=PORTS_Hub \
+   --wandb_project_name=PORTS_Hub_mnrl \
    --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap
 
 
