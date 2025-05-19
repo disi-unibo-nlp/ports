@@ -480,9 +480,9 @@ This will create 27 jobs exploring different temperature and preference weight s
 
 
 ./run_sbatch.sh --script="ports" \
-   --lr=1e-5 \
+   --lr=1e-4 \
    --retrieval_model=answerdotai/ModernBERT-base,BAAI/bge-m3 \
-   --inference_model=qwen3,llama3.2,gemma3 \
+   --inference_model=gemma3 \
    --batch_size=2 \
    --epochs=2 \
    --wandb_project_name=PORTS_Hub_Ports_sample \
@@ -491,11 +491,11 @@ This will create 27 jobs exploring different temperature and preference weight s
    --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=16 --eval_steps=0.5 --max_train_samples=1000"
 
 ./run_sbatch.sh --script="mnrl" \
-   --lr=1e-5 \
+   --lr=1e-4 \
    --retrieval_model=answerdotai/ModernBERT-base,BAAI/bge-m3 \
    --batch_size=2 \
    --epochs=2 \
-   --wandb_project_name=PORTS_Hub_MNRL_sample \
+   --wandb_project_name=PORTS_Hub_MNRL_sample_lastv \
    --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap \
    --params="--max_train_samples=1000"
 
@@ -505,8 +505,8 @@ This will create 27 jobs exploring different temperature and preference weight s
   --wandb_project_name=PORTS_Hub_REPLUG_sample \
   --retrieval_model=answerdotai/ModernBERT-base,BAAI/bge-m3 \
   --batch_size=2 \
-  --lr=1e-5 \
-  --inference_model=qwen3,llama3.2,gemma3 \
+  --lr=1e-4 \
+  --inference_model=gemma3 \
   --weight_decay=0.01 \
   --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap \
   --params="--max_train_samples=1000 --eval_steps=0.5 --warmup_ratio=0.1 --corpus_updates=500"

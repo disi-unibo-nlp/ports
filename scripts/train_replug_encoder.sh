@@ -62,6 +62,7 @@ while [[ $# -gt 0 ]]; do
     --lambda_loss=*) ;; # Accept but ignore
     --lambda_weight=*) ;; # Accept but ignore
     --preference_weight=*) ;; # Accept but ignore
+    --n_reembedding_steps=*) ;; # Accept but ignore
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
   shift
