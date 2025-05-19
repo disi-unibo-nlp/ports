@@ -622,15 +622,15 @@ def main(args):
                 model.save(final_model_path)
                 logger.info(f"Saved final model to {final_model_path}")
 
-            if args.push_to_hub and os.environ.get('HF_TOKEN'):
-                repo_name = args.hub_repo_name or f"api-retriever-{args.model_name.split('/')[-1]}-{args.dataset}"
-                try:
-                    model.save_to_hub(repo_id=repo_name,
-                                      commit_message="Add final trained model",
-                                      private=not args.public_model,
-                                      exist_ok=True)
-                except Exception as e:
-                    logger.error(f"Failed to push model to hub: {e}")
+            # if args.push_to_hub and os.environ.get('HF_TOKEN'):
+            #     repo_name = args.hub_repo_name or f"api-retriever-{args.model_name.split('/')[-1]}-{args.dataset}"
+            #     try:
+            #         model.save_to_hub(repo_id=repo_name,
+            #                           commit_message="Add final trained model",
+            #                           private=not args.public_model,
+            #                           exist_ok=True)
+            #     except Exception as e:
+            #         logger.error(f"Failed to push model to hub: {e}")
 
             if wandb_run:
                 wandb.finish()

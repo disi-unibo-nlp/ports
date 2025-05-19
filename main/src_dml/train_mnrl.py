@@ -568,18 +568,18 @@ def main(args):
             model.save(final_model_path)
             logger.info(f"Model saved successfully")
 
-            if args.push_to_hub and os.environ.get('HF_TOKEN'):
-                repo_name = args.hub_repo_name or f"api-retriever-{args.model_name.split('/')[-1]}-{args.dataset}"
-                logger.info(f"Pushing model to Hugging Face Hub: {repo_name}")
-                try:
-                    model.save_to_hub(repo_id=repo_name,
-                                      commit_message="Add final trained model",
-                                      private=not args.public_model,
-                                      exist_ok=True)
-                    logger.info(f"Model pushed successfully to Hugging Face Hub: {repo_name}")
-                except Exception as e:
-                    logger.error(f"Failed to push model to hub: {e}")
-                    logger.error(traceback.format_exc())
+            # if args.push_to_hub and os.environ.get('HF_TOKEN'):
+            #     repo_name = args.hub_repo_name or f"api-retriever-{args.model_name.split('/')[-1]}-{args.dataset}"
+            #     logger.info(f"Pushing model to Hugging Face Hub: {repo_name}")
+            #     try:
+            #         model.save_to_hub(repo_id=repo_name,
+            #                           commit_message="Add final trained model",
+            #                           private=not args.public_model,
+            #                           exist_ok=True)
+            #         logger.info(f"Model pushed successfully to Hugging Face Hub: {repo_name}")
+            #     except Exception as e:
+            #         logger.error(f"Failed to push model to hub: {e}")
+            #         logger.error(traceback.format_exc())
 
             if wandb_run:
                 logger.info("Finishing W&B run")
