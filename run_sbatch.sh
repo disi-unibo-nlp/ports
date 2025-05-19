@@ -25,6 +25,7 @@ GAMMA=(1.0)  # Default gamma value
 LAMBDA_LOSS=(0.2)  # Default lambda loss value
 PREFERENCE_WEIGHT=(0.1)  # Default preference weight
 WEIGHT_DECAY=(0.01)  # Default weight decay
+N_REEMBEDDING_STEPS=(50)  # Default n_reembedding_steps
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -91,6 +92,13 @@ while [[ $# -gt 0 ]]; do
     --weight_decay=*)
       IFS=',' read -ra WEIGHT_DECAY <<< "${1#*=}"
       ;;
+    --embedding_update_steps=*)
+      # For backward compatibility, use this as n_reembedding_steps
+      IFS=',' read -ra N_REEMBEDDING_STEPS <<< "${1#*=}"
+      ;;
+    --n_reembedding_steps=*)
+      IFS=',' read -ra N_REEMBEDDING_STEPS <<< "${1#*=}"
+      ;;
     *) 
       echo "Unknown parameter: $1"
       exit 1 
@@ -130,6 +138,7 @@ esac
 [[ ${#LAMBDA_LOSS[@]} -eq 0 ]] && LAMBDA_LOSS=(0.2)
 [[ ${#PREFERENCE_WEIGHT[@]} -eq 0 ]] && PREFERENCE_WEIGHT=(0.1)
 [[ ${#WEIGHT_DECAY[@]} -eq 0 ]] && WEIGHT_DECAY=(0.01)
+[[ ${#N_REEMBEDDING_STEPS[@]} -eq 0 ]] && N_REEMBEDDING_STEPS=(50)
 
 # If no machines specified, set a single empty value to iterate once without machine specification
 [[ ${#DEST_MACHINE[@]} -eq 0 ]] && DEST_MACHINE=("")
@@ -138,21 +147,21 @@ esac
 job_count=0
 
 # Iterate over all parameter combinations
-for machine in "${DEST_MACHINE[@]}"; do
-  for gpu_type in "${GPU_TYPE[@]}"; do
-    for gpu_count in "${GPU_COUNT[@]}"; do
-      for lr in "${LR[@]}"; do
-        for bs in "${BATCH_SIZE[@]}"; do
-          for ep in "${EPOCHS[@]}"; do
-            for ds in "${DATASET[@]}"; do
-              for rm in "${RETRIEVAL_MODEL[@]}"; do
-                for im in "${INFERENCE_MODEL[@]}"; do
-                  for max_seq_len in "${INFERENCE_MAX_SEQ_LEN[@]}"; do
-                    for beta in "${BETA[@]}"; do
-                      for gamma in "${GAMMA[@]}"; do
-                        for lambda_loss in "${LAMBDA_LOSS[@]}"; do
-                          for pref_weight in "${PREFERENCE_WEIGHT[@]}"; do
-                            for weight_decay in "${WEIGHT_DECAY[@]}"; do
+for gpu_type in "${GPU_TYPE[@]}"; do
+  for gpu_count in "${GPU_COUNT[@]}"; do
+    for lr in "${LR[@]}"; do
+      for bs in "${BATCH_SIZE[@]}"; do
+        for ep in "${EPOCHS[@]}"; do
+          for ds in "${DATASET[@]}"; do
+            for rm in "${RETRIEVAL_MODEL[@]}"; do
+              for im in "${INFERENCE_MODEL[@]}"; do
+                for max_seq_len in "${INFERENCE_MAX_SEQ_LEN[@]}"; do
+                  for beta in "${BETA[@]}"; do
+                    for gamma in "${GAMMA[@]}"; do
+                      for lambda_loss in "${LAMBDA_LOSS[@]}"; do
+                        for pref_weight in "${PREFERENCE_WEIGHT[@]}"; do
+                          for weight_decay in "${WEIGHT_DECAY[@]}"; do
+                            for n_reembedding_steps in "${N_REEMBEDDING_STEPS[@]}"; do
                               for wr in "${WANDB_RUN_NAME[@]}"; do
                                 for wp in "${WANDB_PROJECT_NAME[@]}"; do
                                   for add_params in "${ADDITIONAL_PARAMS[@]}"; do
@@ -183,6 +192,9 @@ for machine in "${DEST_MACHINE[@]}"; do
                                     # Common parameters for all script types
                                     [[ -n "$weight_decay" ]] && PARAMS="$PARAMS --weight_decay=$weight_decay"
                                     
+                                    # Add reembedding steps parameter
+                                    [[ -n "$n_reembedding_steps" ]] && PARAMS="$PARAMS --n_reembedding_steps=$n_reembedding_steps"
+                                    
                                     # Add save_checkpoints if true
                                     [[ "$SAVE_CHECKPOINTS" == "true" ]] && PARAMS="$PARAMS --save_checkpoints=true"
                                     
@@ -211,6 +223,8 @@ for machine in "${DEST_MACHINE[@]}"; do
                                     
                                     if [[ "$SCRIPT_TYPE" == "ports" ]]; then
                                       job_id="${job_id}_lam${lambda_loss}_pref${pref_weight}"
+                                      # Add reembedding steps to job name for ports
+                                      job_id="${job_id}_nrs${n_reembedding_steps}"
                                     fi
                                     
                                     # Add weight decay to all job types
@@ -223,16 +237,17 @@ for machine in "${DEST_MACHINE[@]}"; do
                                     echo "Parameters: $PARAMS"
                                     
                                     #  Output file name (config params separated by underscores)
-                                    OUTPUT_DIR="output/sbatch_output_new"
+                                    OUTPUT_DIR="output/sbatch_output"
                                     mkdir -p "$OUTPUT_DIR"
                                     OUTPUT_FILE="$OUTPUT_DIR/${job_id}.out"
-      
+    
                                     # Prepare sbatch command
                                     sbatch_cmd="sbatch -N 1 --gpus=$gpu_type:$gpu_count --output=$OUTPUT_FILE --error=$OUTPUT_FILE"
                                     
                                     # Only add machine parameter if specified
+                                    machine=$DEST_MACHINE
                                     if [[ -n "$machine" ]]; then
-                                      sbatch_cmd="$sbatch_cmd -w $machine"
+                                      sbatch_cmd="$sbatch_cmd --nodelist faretra,moro232"
                                       echo "Running on: $machine with $gpu_count $gpu_type GPU(s)"
                                     else
                                       echo "Running on: any available machine with $gpu_count $gpu_type GPU(s)"
@@ -240,6 +255,10 @@ for machine in "${DEST_MACHINE[@]}"; do
                                     
                                     # Add job name and script
                                     sbatch_cmd="$sbatch_cmd -J \"$job_id\" --wrap=\"$SCRIPT $PARAMS\""
+
+                                    echo "***************************"
+                                    echo $sbatch_cmd
+                                    echo "***************************"
                                     
                                     # Submit job with specified parameters
                                     eval $sbatch_cmd

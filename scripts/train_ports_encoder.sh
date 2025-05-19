@@ -4,8 +4,8 @@
 OUTPUT_DIR="${HOME}/ports/output" 
 LLM_CACHE_DIR="/llms"
 DOCKER_INTERNAL_CACHE_DIR="/llms"
-DATASET="toolbench"
-INFERENCE_MODEL="llama3-8B"
+DATASET="toole"
+INFERENCE_MODEL="gemma3"
 RETRIEVAL_MODEL="BAAI/bge-base-en-v1.5"
 RETRIEVAL_MAX_SEQ_LEN=512
 INFERENCE_MAX_SEQ_LEN=1024
@@ -36,6 +36,7 @@ MAX_TRAIN_SAMPLES=10000
 SAVE_CHECKPOINTS=false
 WEIGHT_DECAY=0.01
 EMBEDDING_UPDATE_STEPS=50
+N_EMBEDDING_UPDATE_STEPS=10
 
 # Parse command-line arguments
 while [[ $# -gt 0 ]]; do
@@ -75,10 +76,12 @@ while [[ $# -gt 0 ]]; do
     --save_checkpoints=*) SAVE_CHECKPOINTS="${1#*=}" ;;
     --weight_decay=*) WEIGHT_DECAY="${1#*=}" ;;
     --embedding_update_steps=*) EMBEDDING_UPDATE_STEPS="${1#*=}" ;;
+    --n_reembedding_steps=*) N_EMBEDDING_UPDATE_STEPS="${1#*=}" ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
   shift
 done
+
 
 docker run \
     -v "$OUTPUT_DIR":/workspace/output \
