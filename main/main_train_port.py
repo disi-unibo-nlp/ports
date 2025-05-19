@@ -572,6 +572,12 @@ def train(dataset: Dataset,
         save_checkpoints (bool, optional): Whether to save model checkpoints during training. Defaults to False.
     """
     # ******************** W&B Initialization & Config Logging ********************
+    # Ensure only n_reembedding_steps is used if both are defined
+    if n_reembedding_steps is not None:
+        actual_embedding_update_steps = None
+    else:
+        actual_embedding_update_steps = embedding_update_steps
+    
     config = {
         "beta" : beta,
         "gamma" : gamma,
@@ -585,7 +591,8 @@ def train(dataset: Dataset,
         "inference_max_seq_length" : inference_max_seq_length,
         "epochs" : num_epochs,
         "dataset" : dataset_name,
-        "embedding_update_steps": embedding_update_steps if embedding_update_steps is not None else (len(dataset["train"]) // n_reembedding_steps if n_reembedding_steps else "N/A"),
+        "n_reembedding_steps": n_reembedding_steps,
+        "embedding_update_steps": actual_embedding_update_steps,
         "train_data_samples" : len(dataset["train"]),
         "preference_weight": preference_weight,
         "num_neg_examples": number_of_neg_examples,
@@ -671,12 +678,9 @@ def train(dataset: Dataset,
         data_splits = []
 
         # ******************** Data Splitting (for Re-embedding) ********************
-        if not n_reembedding_steps or n_reembedding_steps <= 0:
-            # No re-embedding, use the whole dataset for the epoch
-            data_splits = [dataset]
-            logger.info(f"Using full dataset for Epoch {epoch+1}")
-        else:
-            # Split the training data into `n_reembedding_steps` parts
+        # Prioritize n_reembedding_steps if set
+        if n_reembedding_steps and n_reembedding_steps > 0:
+            # Use n_reembedding_steps for splitting
             subsplit_len = ds_length // n_reembedding_steps
             data_subsplits_lens = [subsplit_len] * n_reembedding_steps
             # Add the remainder to the last split
@@ -684,7 +688,7 @@ def train(dataset: Dataset,
             if remainder > 0:
                  data_subsplits_lens[-1] += remainder # Add remainder to the last split's length
 
-            logger.info(f"Creating {len(data_subsplits_lens)} data sub-splits for Epoch {epoch+1} (lengths: {data_subsplits_lens})")
+            logger.info(f"Creating {len(data_subsplits_lens)} data sub-splits for Epoch {epoch+1} using n_reembedding_steps={n_reembedding_steps} (lengths: {data_subsplits_lens})")
             current_index = 0
             for idx, _len in enumerate(data_subsplits_lens):
                 _start = current_index
@@ -692,6 +696,10 @@ def train(dataset: Dataset,
                 _ds_sample = dataset["train"].select(range(_start, _end))
                 data_splits.append(DatasetDict({"train": _ds_sample}))
                 current_index = _end
+        else:
+            # No re-embedding, use the whole dataset for the epoch
+            data_splits = [dataset]
+            logger.info(f"Using full dataset for Epoch {epoch+1} (no n_reembedding_steps specified)")
 
         logger.info(f"Starting training epoch {epoch+1}/{num_epochs}")
         epoch_loss = 0.0
@@ -1258,16 +1266,23 @@ def main():
     )
 
     # ******************** Prepare Training Arguments ********************
-    # Calculate n_reembedding_steps based on embedding_update_steps if provided
-    if args.embedding_update_steps is not None:
-        # If embedding_update_steps is provided, override n_reembedding_steps
+    # Priority: n_reembedding_steps takes precedence over embedding_update_steps
+    if args.n_reembedding_steps is not None:
+        logger.info(f"Using n_reembedding_steps={args.n_reembedding_steps} (ignoring embedding_update_steps={args.embedding_update_steps})")
+        effective_n_reembedding_steps = args.n_reembedding_steps
+        embedding_update_steps = None
+    elif args.embedding_update_steps is not None:
+        # Calculate n_reembedding_steps if only embedding_update_steps is provided
         n_reembedding_steps_calculated = len(dataset["train"]) // args.embedding_update_steps if args.embedding_update_steps > 0 else None
         if n_reembedding_steps_calculated == 0:  # Ensure at least 1 split if dataset is smaller than update_steps
             n_reembedding_steps_calculated = 1
-        logger.info(f"Overriding n_reembedding_steps ({args.n_reembedding_steps}) with calculated value ({n_reembedding_steps_calculated}) based on embedding_update_steps={args.embedding_update_steps}")
+        logger.info(f"Using calculated n_reembedding_steps={n_reembedding_steps_calculated} based on embedding_update_steps={args.embedding_update_steps}")
         effective_n_reembedding_steps = n_reembedding_steps_calculated
+        embedding_update_steps = args.embedding_update_steps
     else:
-        effective_n_reembedding_steps = args.n_reembedding_steps
+        logger.info("No embedding update strategy specified. Using default.")
+        effective_n_reembedding_steps = None
+        embedding_update_steps = None
         
     train_eval_config = {
         "dataset" : dataset,
@@ -1282,7 +1297,7 @@ def main():
         "eval_strategy" : args.eval_strategy,
         "eval_steps" : args.eval_steps,
         "n_reembedding_steps" : effective_n_reembedding_steps,
-        "embedding_update_steps": args.embedding_update_steps,
+        "embedding_update_steps": embedding_update_steps,
         "prompt_template" : prompt_template_str,
         "instruction_prompt" : instruction,
         "lambda_loss" : args.lambda_loss,

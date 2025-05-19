@@ -469,12 +469,12 @@ This will create 27 jobs exploring different temperature and preference weight s
 
 ./run_sbatch.sh --script="ports" \
    --lr=1e-4,2e-4,1e-3,2e-5,1e-5 \
-   --retrieval_model=BAAI/bge-m3 \
+   --retrieval_model=answerdotai/ModernBERT-base \
    --inference_model=gemma3 \
    --batch_size=2 \
    --epochs=1 \
    --wandb_project_name=PORTS_Hub_ports_analytics \
-   --n_reembedding_steps=10,25,50,100,500,1000 \
+   --n_reembedding_steps=10,25,50,100,200,500,1000 \
    --dataset=toole \
    --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=16 --eval_steps=0.5 --max_train_samples=1000"
 

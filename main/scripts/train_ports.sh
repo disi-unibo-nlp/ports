@@ -23,7 +23,10 @@ BETA="${BETA:-0.5}"
 GAMMA="${GAMMA:-0.5}"
 PREF_BETA="${PREF_BETA:-1}"
 CORPUS_UPDATES="${CORPUS_UPDATES:-1}"
-EMBEDDING_UPDATE_STEPS="${EMBEDDING_UPDATE_STEPS:-50}"
+# Keep embedding_update_steps for backward compatibility
+EMBEDDING_UPDATE_STEPS="${EMBEDDING_UPDATE_STEPS:-}"
+# Add n_reembedding_steps with priority
+N_REEMBEDDING_STEPS="${N_REEMBEDDING_STEPS:-}"
 N_EPOCHS="${N_EPOCHS:-5}"
 SEED="${SEED:-42}"
 EVAL_STEPS="${EVAL_STEPS:-0.2}"
@@ -51,9 +54,13 @@ MAX_CHECKPOINTS_ARGS=""
 if [ -n "$MAX_CHECKPOINTS" ]; then
   MAX_CHECKPOINTS_ARGS="--max_checkpoints $MAX_CHECKPOINTS"
 fi
-EMBEDDING_UPDATE_STEPS_ARGS=""
-if [ -n "$EMBEDDING_UPDATE_STEPS" ]; then
-  EMBEDDING_UPDATE_STEPS_ARGS="--embedding_update_steps $EMBEDDING_UPDATE_STEPS"
+
+# Handle embedding update parameters - prioritize n_reembedding_steps if both are defined
+N_REEMBEDDING_ARGS=""
+if [ -n "$N_REEMBEDDING_STEPS" ]; then
+  N_REEMBEDDING_ARGS="--n_reembedding_steps $N_REEMBEDDING_STEPS"
+elif [ -n "$EMBEDDING_UPDATE_STEPS" ]; then
+  N_REEMBEDDING_ARGS="--embedding_update_steps $EMBEDDING_UPDATE_STEPS"
 fi
 
 PYTHON_SCRIPT="/workspace/main/main_train_port.py"
@@ -70,8 +77,7 @@ python3 $PYTHON_SCRIPT \
     --train_batch_size $TRAIN_BATCH_SIZE \
     --eval_batch_size $EVAL_BATCH_SIZE \
     --preprocessing_batch_size $PREPROCESS_BATCH_SIZE \
-    --n_reembedding_steps $CORPUS_UPDATES \
-    --embedding_update_steps $EMBEDDING_UPDATE_STEPS \
+    $N_REEMBEDDING_ARGS \
     --padding_side $PADDING_SIDE \
     --lambda_loss $LAMBDA_WEIGHT \
     --n_neg_examples $N_NEGS \

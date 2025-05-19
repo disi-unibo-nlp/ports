@@ -36,6 +36,7 @@ WANDB_PROJECT_NAME ?= PORTS_AAAI-EMNLP
 LOG_FREQ ?= 20
 PREF_BETA ?= 1
 CORPUS_UPDATES ?= 100
+N_REEMBEDDING_STEPS ?=
 EMBEDDING_UPDATE_STEPS ?=
 SAVE_STRATEGY ?= epoch
 SAVE_STEPS ?= 
@@ -110,6 +111,7 @@ help:
 	@echo "  WARMUP_RATIO=<value>    - Fraction of training steps for warmup (default: 0.1)"
 	@echo "  K_EVAL_VALUES_ACCURACY=<values> - Values for accuracy@k (default: 1 3 5)"
 	@echo "  K_EVAL_VALUES_NDCG=<values> - Values for ndcg@k (default: 1 3 5)"
+	@echo "  N_REEMBEDDING_STEPS=<value> - Number of splits for corpus re-embedding (default: none)"
 	@echo ""
 	@echo "For additional parameters, see the README.md file"
 	@echo ""
@@ -142,6 +144,7 @@ ports:
 	BETA=$(BETA) \
 	PREF_BETA=$(PREF_BETA) \
 	CORPUS_UPDATES=$(CORPUS_UPDATES) \
+	N_REEMBEDDING_STEPS=$(N_REEMBEDDING_STEPS) \
 	EMBEDDING_UPDATE_STEPS=$(EMBEDDING_UPDATE_STEPS) \
 	SEED=$(SEED) \
 	EVAL_STEPS=$(EVAL_STEPS) \

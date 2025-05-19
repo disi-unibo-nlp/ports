@@ -36,7 +36,7 @@ MAX_TRAIN_SAMPLES=10000
 SAVE_CHECKPOINTS=false
 WEIGHT_DECAY=0.01
 EMBEDDING_UPDATE_STEPS=50
-N_EMBEDDING_UPDATE_STEPS=10
+N_REEMBEDDING_STEPS=10
 
 # Parse command-line arguments
 while [[ $# -gt 0 ]]; do
@@ -76,12 +76,20 @@ while [[ $# -gt 0 ]]; do
     --save_checkpoints=*) SAVE_CHECKPOINTS="${1#*=}" ;;
     --weight_decay=*) WEIGHT_DECAY="${1#*=}" ;;
     --embedding_update_steps=*) EMBEDDING_UPDATE_STEPS="${1#*=}" ;;
-    --n_reembedding_steps=*) N_EMBEDDING_UPDATE_STEPS="${1#*=}" ;;
+    --n_reembedding_steps=*) N_REEMBEDDING_STEPS="${1#*=}" ;;
     *) echo "Unknown parameter: $1"; exit 1 ;;
   esac
   shift
 done
 
+# Ensure only one of the embedding update parameters is passed (prioritize n_reembedding_steps)
+if [ -n "$N_REEMBEDDING_STEPS" ]; then
+  EMBEDDING_PARAM="N_REEMBEDDING_STEPS=$N_REEMBEDDING_STEPS"
+elif [ -n "$EMBEDDING_UPDATE_STEPS" ]; then
+  EMBEDDING_PARAM="EMBEDDING_UPDATE_STEPS=$EMBEDDING_UPDATE_STEPS"
+else
+  EMBEDDING_PARAM="" # If neither is specified
+fi
 
 docker run \
     -v "$OUTPUT_DIR":/workspace/output \
@@ -123,4 +131,5 @@ docker run \
     K_EVAL_VALUES_NDCG="$K_EVAL_VALUES_NDCG" \
     MAX_TRAIN_SAMPLES=$MAX_TRAIN_SAMPLES \
     SAVE_CHECKPOINTS=$SAVE_CHECKPOINTS \
-    WEIGHT_DECAY=$WEIGHT_DECAY
+    WEIGHT_DECAY=$WEIGHT_DECAY \
+    $EMBEDDING_PARAM
