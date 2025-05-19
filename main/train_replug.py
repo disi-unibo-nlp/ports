@@ -310,6 +310,7 @@ def main():
             examples["text"], 
             truncation=True, 
             padding=True, 
+            max_length=args.inference_max_seq_length,  # Explicitly set the max length here
             return_tensors="pt"
         )
     
@@ -754,6 +755,7 @@ def main():
                 for inner_batch in inner_data_loader:
                     inner_batch = {k: v.to("cuda") for k, v in inner_batch.items()}
                     labels = inner_batch.pop("labels")
+                    
                     with torch.no_grad():
                         outputs = infer_model(**inner_batch)
                     perplexity = get_perplexity_per_sample(outputs, labels, cross_entropy)
