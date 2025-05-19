@@ -713,11 +713,22 @@ def main():
                 # Use the base model directly for query encoding to ensure gradient flow
                 query_inputs = {k: batch[k].to("cuda") for k in ["input_ids", "attention_mask"]}
                 query_outputs = retr_model_base(**query_inputs)
-                embedded_queries = query_outputs.pooler_output  # Use pooler output for CLS token
                 
-                # If pooler_output not available, extract CLS token manually
-                if not hasattr(query_outputs, 'pooler_output'):
-                    embedded_queries = query_outputs.last_hidden_state[:, 0]  # Use CLS token
+                # Extract embeddings using a similar approach as in main_train_port.py
+                if hasattr(query_outputs, 'pooler_output') and query_outputs.pooler_output is not None:
+                    # BERT and RoBERTa models have pooler_output
+                    embedded_queries = query_outputs.pooler_output
+                    if verbose:
+                        logger.info("Using pooler_output for embeddings")
+                elif hasattr(query_outputs, 'last_hidden_state'):
+                    # Use CLS token for models without pooler_output
+                    embedded_queries = query_outputs.last_hidden_state[:, 0]  # Use first token ([CLS])
+                    if verbose:
+                        logger.info("Using CLS token from last_hidden_state for embeddings")
+                else:
+                    # Fallback for other model types
+                    logger.warning("Unusual model output format. Using first element of tuple.")
+                    embedded_queries = query_outputs[0][:, 0]  # Try to get first token from first tensor
                 
                 # Manual similarity calculation with gradients
                 embedded_queries = F.normalize(embedded_queries, p=2, dim=1)
