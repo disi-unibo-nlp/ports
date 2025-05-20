@@ -486,9 +486,9 @@ This will create 27 jobs exploring different temperature and preference weight s
    --inference_model=gemma3 \
    --batch_size=2 \
    --epochs=1 \
-   --wandb_project_name=PORTS_Hub_Ports_sample_TEST \
+   --wandb_project_name=PORTS_Hub_Ports_sample_TEST2 \
    --n_reembedding_steps=200 \
-   --dataset=bfcl \
+   --dataset=toolbench_1 \
    --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=16 --eval_steps=0.2 --max_train_samples=1000 --seed=42"
 
 ./run_sbatch.sh --script="mnrl" \
@@ -496,21 +496,21 @@ This will create 27 jobs exploring different temperature and preference weight s
    --retrieval_model=answerdotai/ModernBERT-base\
    --batch_size=2 \
    --epochs=1 \
-   --wandb_project_name=PORTS_Hub_Ports_sample_TEST \
-   --dataset=bfcl \
+   --wandb_project_name=PORTS_Hub_Ports_sample_TEST2 \
+   --dataset=toolbench_1 \
    --params="--max_train_samples=1000 --eval_steps=0.2 --seed=42 --pooling=cls"
 
 
 ./run_sbatch.sh --script="replug" \
   --epochs=1 \
-  --wandb_project_name=PORTS_Hub_Ports_sample_TEST \
+  --wandb_project_name=PORTS_Hub_Ports_sample_TEST2 \
   --retrieval_model=answerdotai/ModernBERT-base \
   --batch_size=2 \
   --lr=1e-5 \
   --inference_model=gemma3 \
   --weight_decay=0.01 \
-  --dataset=bfcl \
-  --params="--max_train_samples=1000 --eval_steps=0.2 --warmup_ratio=0.1 --corpus_updates=200"
+  --dataset=toolbench_1 \
+  --params="--max_train_samples=1000 --eval_steps=0.2 --warmup_ratio=0.1 --corpus_updates=200 --preprocess_batch_size=4"
 ```
 
 ### Common Additional Parameters

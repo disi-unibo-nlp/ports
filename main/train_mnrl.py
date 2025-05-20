@@ -714,7 +714,7 @@ if __name__ == '__main__':
                         help="Transformer model name or path (e.g., 'bert-base-uncased', './my_model')")
     parser.add_argument("--retriever_max_seq_length", default=256, type=int,
                         help="Maximum sequence length for the retriever model")
-    parser.add_argument("--pooling", default="mean", type=str, choices=["mean", "cls", "max"],
+    parser.add_argument("--pooling", default="cls", type=str, choices=["mean", "cls", "max"],
                         help="Pooling strategy (mean, cls, max)")
     parser.add_argument("--use_pre_trained_model", action="store_true",
                         help="Load model_name directly as a SentenceTransformer (if it's an SBERT model ID), otherwise build from base.")

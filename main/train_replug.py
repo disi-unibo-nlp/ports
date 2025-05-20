@@ -571,15 +571,12 @@ def main():
             pooling_mode_cls_token = True
         elif pooling_mode == "mean":
             pooling_mode_mean_tokens = True
-        else:
-            logger.warning(f"Unsupported pooling_mode: {pooling_mode}. Defaulting to CLS pooling.")
-            pooling_mode_cls_token = True # Default to CLS if mode is unknown
 
         pooling_model = models.Pooling(
             word_embedding_model.get_word_embedding_dimension(),
             pooling_mode_cls_token=pooling_mode_cls_token,
             pooling_mode_mean_tokens=pooling_mode_mean_tokens,
-            pooling_mode_max_tokens=False # Assuming max is not generally used/needed
+            pooling_mode_max_tokens=False
         )
         
         # Add normalization layer for consistent embeddings
@@ -704,15 +701,15 @@ def main():
         for split_idx, batch_indices in enumerate(data_splits):
             logger.info(f"Processing split {split_idx+1}/{len(data_splits)} with {len(batch_indices)} batches")
             
-            # Important change: Don't create new model instances, use the base model
-            # Create a SentenceTransformer wrapper that shares parameters with the base model
-            # Use 'cls' pooling (default) for training instance, or make it configurable if needed
-            retr_model_train_instance = get_sentence_transformer(retr_model_base, device="cuda", pooling_mode="cls")
-            retr_model_train_instance.train()
+            # Temporarily set the base model to eval mode for consistent corpus embeddings
+            retr_model_base.eval() 
             
-            # Get document embeddings with the current model state
+            # Create a SentenceTransformer wrapper. It will pick up the eval state of retr_model_base.
+            # Pooling mode 'cls' is used here, consistent with other parts.
+            retr_model_train_instance = get_sentence_transformer(retr_model_base, device="cuda", pooling_mode="cls")
+            
             logger.info(f"Embedding corpus for split {split_idx+1}")
-            with torch.no_grad():  # Only disable gradients for corpus embedding
+            with torch.no_grad():  # Disable gradients for corpus embedding
                 # Clear CUDA cache before embedding
                 torch.cuda.empty_cache()
                 
@@ -754,6 +751,9 @@ def main():
                         max_length=args.retr_max_seq_length
                     )
             
+            # Restore the base model to train mode for the subsequent training steps
+            retr_model_base.train()
+
             # Ensure embedded_documents is on CUDA
             if embedded_documents.device.type != "cuda":
                 embedded_documents = embedded_documents.to("cuda")
