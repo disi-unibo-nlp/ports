@@ -231,14 +231,16 @@ def main():
         available_splits = list(dataset.keys())
         logger.info(f"Created splits: {available_splits}")
 
-    # Now determine which split to use for evaluation
-    if 'test' in dataset:
-        eval_split_name = 'test'
-    elif 'validation' in dataset:
+    # Now determine which split to use for evaluation queries (prioritize validation for dev set)
+    if 'validation' in dataset:
         eval_split_name = 'validation'
+        logger.info(f"Using 'validation' split as the primary evaluation split (for queries and as corpus fallback).")
+    elif 'test' in dataset:
+        eval_split_name = 'test'
+        logger.info(f"Using 'test' split as the primary evaluation split (for queries and as corpus fallback), 'validation' not found.")
     else:
         available_splits = list(dataset.keys())
-        raise ValueError(f"Could not find 'test' or 'validation' split for evaluation. Available splits: {available_splits}")
+        raise ValueError(f"Could not find 'validation' or 'test' split for evaluation. Available splits: {available_splits}")
     
     logger.info(f"Dataset split sizes: Train={len(dataset['train'])}, {eval_split_name}={len(dataset[eval_split_name])}")
 
@@ -545,23 +547,39 @@ def main():
 
         return scores
 
-    def get_sentence_transformer(base_model, device="cuda"):
+    def get_sentence_transformer(base_model, device="cuda", pooling_mode="cls"):
         """
         Create a SentenceTransformer wrapper that preserves model state.
         
         This is crucial for ensuring parameter updates in training
         are properly reflected in evaluation.
+
+        Args:
+            base_model: The Hugging Face AutoModel to wrap.
+            device (str): Device to place the model on.
+            pooling_mode (str): Pooling strategy ('cls' or 'mean').
         """
         # Create a proper wrapper architecture
         word_embedding_model = models.Transformer(base_model.config._name_or_path)
         # Copy the state from the base model to ensure continuity
         word_embedding_model.auto_model = base_model
         
+        pooling_mode_cls_token = False
+        pooling_mode_mean_tokens = False
+
+        if pooling_mode == "cls":
+            pooling_mode_cls_token = True
+        elif pooling_mode == "mean":
+            pooling_mode_mean_tokens = True
+        else:
+            logger.warning(f"Unsupported pooling_mode: {pooling_mode}. Defaulting to CLS pooling.")
+            pooling_mode_cls_token = True # Default to CLS if mode is unknown
+
         pooling_model = models.Pooling(
             word_embedding_model.get_word_embedding_dimension(),
-            pooling_mode_cls_token=True,
-            pooling_mode_mean_tokens=False,
-            pooling_mode_max_tokens=False
+            pooling_mode_cls_token=pooling_mode_cls_token,
+            pooling_mode_mean_tokens=pooling_mode_mean_tokens,
+            pooling_mode_max_tokens=False # Assuming max is not generally used/needed
         )
         
         # Add normalization layer for consistent embeddings
@@ -628,7 +646,8 @@ def main():
 
     logger.info("--- Initial Evaluation ---")
     retr_model_base.eval()
-    retr_model_eval_instance = get_sentence_transformer(retr_model_base, device="cuda")
+    # Use 'mean' pooling for initial evaluation to match train_mnrl.py and main_train_port.py
+    retr_model_eval_instance = get_sentence_transformer(retr_model_base, device="cuda", pooling_mode="cls")
     with torch.no_grad():
         embedded_eval_documents = embed_corpus(retr_model_eval_instance,
                                                retr_tokenizer,
@@ -687,7 +706,8 @@ def main():
             
             # Important change: Don't create new model instances, use the base model
             # Create a SentenceTransformer wrapper that shares parameters with the base model
-            retr_model_train_instance = get_sentence_transformer(retr_model_base, device="cuda")
+            # Use 'cls' pooling (default) for training instance, or make it configurable if needed
+            retr_model_train_instance = get_sentence_transformer(retr_model_base, device="cuda", pooling_mode="cls")
             retr_model_train_instance.train()
             
             # Get document embeddings with the current model state
