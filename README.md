@@ -498,12 +498,12 @@ This will create 27 jobs exploring different temperature and preference weight s
    --epochs=1 \
    --wandb_project_name=PORTS_Hub_Ports_sample_TEST \
    --dataset=bfcl \
-   --params="--max_train_samples=1000 --eval_steps=0.2 --seed=42"
+   --params="--max_train_samples=1000 --eval_steps=0.2 --seed=42 --pooling=cls"
 
 
 ./run_sbatch.sh --script="replug" \
   --epochs=1 \
-  --wandb_project_name=PORTS_Hub_REPLUG_sample_lastv3 \
+  --wandb_project_name=PORTS_Hub_Ports_sample_TEST \
   --retrieval_model=answerdotai/ModernBERT-base \
   --batch_size=2 \
   --lr=1e-5 \

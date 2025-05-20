@@ -350,11 +350,20 @@ def run_evaluation(
     retr_model.eval() # Ensure the model is in evaluation mode
     # ******************** Select Dataset Split ********************
     
-    eval_split = (
-        dataset["train"]
-        if eval_name == "train_eval"
-        else (dataset["test"] if "test" in dataset else dataset["validation"])
-    )
+    if eval_name == "train_eval":
+        eval_split = dataset["train"]
+    else: # For "eval" or "initial_eval"
+        # Prioritize 'validation' split for queries, then 'test', to match train_mnrl.py's dev_split_name logic
+        if "validation" in dataset:
+            eval_split = dataset["validation"]
+            logger.info(f"Using 'validation' split for queries in '{eval_name}' evaluation.")
+        elif "test" in dataset:
+            eval_split = dataset["test"]
+            logger.info(f"Using 'test' split for queries in '{eval_name}' evaluation ('validation' not found).")
+        else:
+            # This should ideally not happen if dataset structure is validated earlier
+            logger.error(f"Neither 'validation' nor 'test' split found for '{eval_name}' evaluation. Cannot proceed.")
+            return [], [], {}
 
 
     triplets = []
