@@ -447,19 +447,13 @@ def main(args):
 
         # For test evaluation, create a combined corpus of train + test APIs
         test_api_corpus = []
-        combined_test_eval_corpus = []
         
         if args.evaluate_on_test:
             if required_field not in dataset[test_split_name].column_names:
                 raise ValueError(f"Required field '{required_field}' not found in test split '{test_split_name}'.")
             
-            # Extract APIs strictly from the test split
-            test_api_corpus = list(set(dataset[test_split_name][required_field]))
-            logger.info(f"Test API corpus size: {len(test_api_corpus)}")
-            
-            # Create combined corpus for final test evaluation (train + test)
-            combined_test_eval_corpus = list(set(train_api_corpus) | set(test_api_corpus))
-            logger.info(f"Combined test evaluation corpus size (train + test): {len(combined_test_eval_corpus)}")
+            logger.info(f"Final test evaluation will use dev_api_corpus (size: {len(dev_api_corpus)})")
+
 
         # Create dev triplets using only dev APIs for the corpus
         logger.info("Creating dev triplets...")
@@ -477,12 +471,12 @@ def main(args):
                                              args.random_negatives)
         logger.info(f"Train triplets: {len(train_triplets)}")
 
-        # Create test triplets using combined corpus for negative sampling
+        # Create test triplets using dev corpus for negative sampling
         test_triplets = []
         if args.evaluate_on_test:
-            logger.info("Creating test triplets with combined evaluation corpus...")
+            logger.info("Creating test triplets with dev_api_corpus for negative sampling...")
             test_triplets = create_api_triplets(dataset[test_split_name],
-                                                combined_test_eval_corpus,
+                                                dev_api_corpus, # Use dev_api_corpus for negatives
                                                 args.negatives_per_sample,
                                                 args.random_negatives)
             logger.info(f"Test triplets: {len(test_triplets)}")
@@ -665,10 +659,11 @@ def main(args):
                 eval_model = None
 
             if eval_model:
-                # For final test evaluation, use the combined corpus (train + test APIs)
+                # For final test evaluation, use the dev API corpus
+                logger.info(f"Evaluating on test queries using dev_api_corpus (size: {len(dev_api_corpus)}) as the search space.")
                 test_stats = evaluate_on_test(eval_model, 
                                               test_triplets, 
-                                              combined_test_eval_corpus,  # Use combined corpus of train + test APIs
+                                              dev_api_corpus,  # Use dev_api_corpus as the evaluation corpus
                                               model_save_path, 
                                               batch_size=args.eval_batch_size,
                                               k_values_accuracy=k_values_accuracy,

@@ -401,7 +401,6 @@ def run_evaluation(
         # logger.info(f"    Negative: {n[:100]}...") # Negative is empty here
 
     # ******************** Prepare SentenceTransformer Wrapper ********************
-    # The evaluator expects a SentenceTransformer model. We wrap the HF model temporarily.
     logger.info(f"Preparing SentenceTransformer wrapper for evaluation")
     tmp_model_path = os.path.join("tmp_retr_model_eval") # Temporary directory
     retr_model.save_pretrained(tmp_model_path)
@@ -432,7 +431,6 @@ def run_evaluation(
     )
 
     # ******************** Compute Corpus Embeddings ********************
-    # create a tensor for the corpus embeddings
     logger.info(f"Computing corpus embeddings for '{eval_name}'")
     corpus_embeddings = embed_corpus(
         retr_model=st_retr_model,
@@ -633,14 +631,26 @@ def train(dataset: Dataset,
         "epoch": 0,
         "steps": 0
     }
-    run_evaluation(**eval_config)
+    ranks_eval, ndcg_eval, scores_eval = run_evaluation(**eval_config)
+
+    logger.info("--- Initial Evaluation Summary (eval split) ---")
+    logger.info(f"  Accuracy@k values ({k_eval_values_accuracy}): {[f'{x:.2f}%' for x in ranks_eval]}")
+    logger.info(f"  NDCG@k values ({k_eval_values_ndcg}): {[f'{x:.4f}' for x in ndcg_eval]}")
+    if wandb.run: # Log to W&B if initialized
+        log_to_wandb(scores_eval, epoch=0, steps=0, prefix="initial_eval")
 
     # --- Evaluation on Training Set ---
     logger.info(f"Starting Initial Evaluation (Train)")
     train_eval_config = eval_config.copy()
     train_eval_config["eval_api_corpus"] = train_api_corpus
     train_eval_config["eval_name"] = "train_eval"
-    run_evaluation(**train_eval_config)
+    ranks_train_eval, ndcg_train_eval, scores_train_eval = run_evaluation(**train_eval_config)
+
+    logger.info("--- Initial Evaluation Summary (train_eval split) ---")
+    logger.info(f"  Accuracy@k values ({k_eval_values_accuracy}): {[f'{x:.2f}%' for x in ranks_train_eval]}")
+    logger.info(f"  NDCG@k values ({k_eval_values_ndcg}): {[f'{x:.4f}' for x in ndcg_train_eval]}")
+    if wandb.run: # Log to W&B if initialized
+        log_to_wandb(scores_train_eval, epoch=0, steps=0, prefix="initial_train_eval")
 
     # ******************** Optimizer and Scheduler Setup ********************
     optimizer = torch.optim.AdamW(
@@ -1242,10 +1252,11 @@ def main():
     train_api_corpus = list(set(dataset["train"]["api_description"]))
     eval_split_name_for_corpus = "test" if "test" in dataset else "validation"
     if eval_split_name_for_corpus in dataset:
-        eval_api_corpus = list(set(dataset[eval_split_name_for_corpus]["api_description"]) | set(train_api_corpus)) # Combine with training corpus
+        # Align with train_mnrl.py: eval_api_corpus should be strictly from the eval split.
+        eval_api_corpus = list(set(dataset[eval_split_name_for_corpus]["api_description"]))
     else:
         logger.warning(f"No 'test' or 'validation' split found for eval corpus. Using training corpus for evaluation.")
-        eval_api_corpus = train_api_corpus # Fallback
+        eval_api_corpus = train_api_corpus # Fallback, though ideally an eval split should exist
 
     logger.info(f"Corpus sizes: Train: {len(train_api_corpus)} | Eval: {len(eval_api_corpus)}")
 

@@ -35,6 +35,34 @@ import wandb
 from tqdm import tqdm
 from dotenv import load_dotenv
 import math
+import gc  # Import gc for garbage collection
+
+# Prevent tokenizers from using parallelism (avoid hangs)
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+# Create a formatter
+formatter = logging.Formatter(
+    fmt="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
+# Get the root logger
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+
+# Check if the root logger already has handlers
+if not root_logger.handlers:
+    # Create a stream handler if no handlers exist
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(formatter)
+    root_logger.addHandler(handler)
+else:
+    # Set the formatter for existing handlers
+    for handler in root_logger.handlers:
+        handler.setFormatter(formatter)
+
+# Create a logger for the current module
+logger = logging.getLogger(__name__)
 
 # Set up environment
 load_dotenv()
@@ -83,14 +111,6 @@ def main():
 
     log_wandb = args.log_to_wandb
     verbose = args.verbose
-
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)  # Set to INFO instead of DEBUG to reduce verbosity
-    stream_handler = logging.StreamHandler()
-    stream_handler.setLevel(logging.INFO)  # Set to INFO
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    stream_handler.setFormatter(formatter)
-    logger.addHandler(stream_handler)
 
     def log_mem_usage(topic):
         if verbose:  # Only log memory usage when verbose flag is set
@@ -236,7 +256,21 @@ def main():
 
     # Define API documents consistently
     train_api_corpus = list(set(dataset["train"]["api_description"]))
-    eval_api_corpus = list(set(dataset[eval_split_name]["api_description"]))
+    
+    # Determine the source for the evaluation API corpus.
+    # Prioritize 'validation' split if it exists, for "dev test only" evaluation.
+    if 'validation' in dataset:
+        logger.info("Using 'validation' split for the evaluation API corpus.")
+        eval_api_corpus = list(set(dataset['validation']['api_description']))
+    elif eval_split_name in dataset: # Fallback to eval_split_name (e.g., 'test') if 'validation' not found
+        logger.info(f"Using '{eval_split_name}' split for the evaluation API corpus ('validation' split not found).")
+        eval_api_corpus = list(set(dataset[eval_split_name]['api_description']))
+    else:
+        # This case should ideally not be reached if eval_split_name is correctly determined earlier.
+        logger.error(f"Cannot determine evaluation API corpus. Neither 'validation' nor '{eval_split_name}' found in dataset splits: {list(dataset.keys())}.")
+        logger.warning("Falling back to using 'train_api_corpus' for evaluation API corpus due to missing dedicated eval corpus source.")
+        eval_api_corpus = train_api_corpus # Fallback to train corpus if no suitable eval corpus found
+
     logger.info(f"Corpus sizes: Train={len(train_api_corpus)}, Eval={len(eval_api_corpus)}")
 
     # Update tokenize function to match main_train_port.py style

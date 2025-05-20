@@ -468,48 +468,49 @@ This will create 27 jobs exploring different temperature and preference weight s
 
 
 ./run_sbatch.sh --script="ports" \
-   --lr=1e-5,2e-5,1e-6,1e-4,1e-3 \
-   --retrieval_model=answerdotai/ModernBERT-base,BAAI/bge-m3 \
+   --lr=2e-4,1e-4,1e-5\
+   --retrieval_model=answerdotai/ModernBERT-base,  \
    --inference_model=gemma3 \
    --batch_size=2 \
    --epochs=1 \
    --wandb_project_name=PORTS_Hub_ports_analytics \
-   --n_reembedding_steps=500 \
-   --dataset=toole \
-   --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=16 --eval_steps=0.5 --max_train_samples=1000"
+   --n_reembedding_steps=100,200,500 \
+   --dataset=apibench,octopus \
+   --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=8 --eval_steps=0.2 --max_train_samples=1000"
 
+#,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap
 
 ./run_sbatch.sh --script="ports" \
    --lr=2e-4 \
-   --retrieval_model=answerdotai/ModernBERT-base,BAAI/bge-m3 \
-   --inference_model=gemma3,qwen3,llama3.2 \
+   --retrieval_model=answerdotai/ModernBERT-base \
+   --inference_model=gemma3 \
    --batch_size=2 \
    --epochs=1 \
-   --wandb_project_name=PORTS_Hub_Ports_sample_lastv \
+   --wandb_project_name=PORTS_Hub_Ports_sample_TEST \
    --n_reembedding_steps=200 \
-   --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap \
-   --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=16 --eval_steps=0.2 --max_train_samples=1000"
+   --dataset=bfcl \
+   --params="--gamma=0.5 --beta=0.5 --preprocess_batch_size=16 --eval_steps=0.2 --max_train_samples=1000 --seed=42"
 
 ./run_sbatch.sh --script="mnrl" \
-   --lr=1e-4 \
-   --retrieval_model=answerdotai/ModernBERT-base,BAAI/bge-m3 \
+   --lr=2e-4 \
+   --retrieval_model=answerdotai/ModernBERT-base\
    --batch_size=2 \
-   --epochs=2 \
-   --wandb_project_name=PORTS_Hub_MNRL_sample_lastv \
-   --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap \
-   --params="--max_train_samples=1000"
+   --epochs=1 \
+   --wandb_project_name=PORTS_Hub_Ports_sample_TEST \
+   --dataset=bfcl \
+   --params="--max_train_samples=1000 --eval_steps=0.2 --seed=42"
 
 
 ./run_sbatch.sh --script="replug" \
   --epochs=1 \
-  --wandb_project_name=PORTS_Hub_REPLUG_sample_lastv2 \
-  --retrieval_model=answerdotai/ModernBERT-base,BAAI/bge-m3 \
+  --wandb_project_name=PORTS_Hub_REPLUG_sample_lastv3 \
+  --retrieval_model=answerdotai/ModernBERT-base \
   --batch_size=2 \
-  --lr=1e-4 \
-  --inference_model=gemma3,qwen3,llama3.2 \
+  --lr=1e-5 \
+  --inference_model=gemma3 \
   --weight_decay=0.01 \
-  --dataset=bfcl,apibank,apibench,octopus,toole,toolbench_1,toolbench_2,toolbench_3,toole-overlap,octopus-overlap \
-  --params="--max_train_samples=1000 --eval_steps=0.5 --warmup_ratio=0.1 --corpus_updates=500"
+  --dataset=bfcl \
+  --params="--max_train_samples=1000 --eval_steps=0.2 --warmup_ratio=0.1 --corpus_updates=200"
 ```
 
 ### Common Additional Parameters
